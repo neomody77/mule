@@ -1,0 +1,148 @@
+import 'dart:convert';
+
+import 'message.dart';
+
+/// 连接状态
+enum SessionConnectionState {
+  disconnected,
+  connecting,
+  connected,
+  error,
+}
+
+/// 聊天会话模型
+class ChatSession {
+  final String id;
+  final String serverId;
+  final String workspaceId;
+  final String workspaceName;
+  String name;
+  final DateTime createdAt;
+  DateTime lastActiveAt;
+  List<ChatMessage> messages;
+  SessionConnectionState connectionState;
+  bool isProcessing;
+  String? error;
+  bool hasUnread; // 是否有未读消息（用户离开页面后收到的消息）
+
+  ChatSession({
+    required this.id,
+    required this.serverId,
+    required this.workspaceId,
+    required this.workspaceName,
+    required this.name,
+    DateTime? createdAt,
+    DateTime? lastActiveAt,
+    List<ChatMessage>? messages,
+    this.connectionState = SessionConnectionState.disconnected,
+    this.isProcessing = false,
+    this.error,
+    this.hasUnread = false,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        lastActiveAt = lastActiveAt ?? DateTime.now(),
+        messages = messages ?? [];
+
+  /// 是否已连接
+  bool get isConnected => connectionState == SessionConnectionState.connected;
+
+  /// 添加消息
+  void addMessage(ChatMessage message) {
+    messages.add(message);
+    lastActiveAt = DateTime.now();
+  }
+
+  /// 更新最后一条消息
+  void updateLastMessage(ChatMessage Function(ChatMessage) updater) {
+    if (messages.isNotEmpty) {
+      messages[messages.length - 1] = updater(messages.last);
+      lastActiveAt = DateTime.now();
+    }
+  }
+
+  /// 清空消息
+  void clearMessages() {
+    messages.clear();
+  }
+
+  /// 从 JSON 创建（不包含 messages，用于持久化 session 元数据）
+  factory ChatSession.fromJson(Map<String, dynamic> json) {
+    return ChatSession(
+      id: json['id'] as String,
+      serverId: json['serverId'] as String,
+      workspaceId: json['workspaceId'] as String,
+      workspaceName: json['workspaceName'] as String,
+      name: json['name'] as String,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      lastActiveAt: DateTime.parse(json['lastActiveAt'] as String),
+    );
+  }
+
+  /// 转为 JSON（不包含 messages）
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'serverId': serverId,
+      'workspaceId': workspaceId,
+      'workspaceName': workspaceName,
+      'name': name,
+      'createdAt': createdAt.toIso8601String(),
+      'lastActiveAt': lastActiveAt.toIso8601String(),
+    };
+  }
+
+  /// 复制
+  ChatSession copyWith({
+    String? id,
+    String? serverId,
+    String? workspaceId,
+    String? workspaceName,
+    String? name,
+    DateTime? createdAt,
+    DateTime? lastActiveAt,
+    List<ChatMessage>? messages,
+    SessionConnectionState? connectionState,
+    bool? isProcessing,
+    String? error,
+    bool? hasUnread,
+  }) {
+    return ChatSession(
+      id: id ?? this.id,
+      serverId: serverId ?? this.serverId,
+      workspaceId: workspaceId ?? this.workspaceId,
+      workspaceName: workspaceName ?? this.workspaceName,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+      lastActiveAt: lastActiveAt ?? this.lastActiveAt,
+      messages: messages ?? List.from(this.messages),
+      connectionState: connectionState ?? this.connectionState,
+      isProcessing: isProcessing ?? this.isProcessing,
+      error: error,
+      hasUnread: hasUnread ?? this.hasUnread,
+    );
+  }
+
+  @override
+  String toString() => 'ChatSession($name @ $workspaceName)';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatSession &&
+          runtimeType == other.runtimeType &&
+          id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+}
+
+/// Session 列表的 JSON 序列化辅助
+class ChatSessionList {
+  static String encode(List<ChatSession> sessions) {
+    return jsonEncode(sessions.map((s) => s.toJson()).toList());
+  }
+
+  static List<ChatSession> decode(String json) {
+    final List<dynamic> list = jsonDecode(json);
+    return list.map((e) => ChatSession.fromJson(e)).toList();
+  }
+}

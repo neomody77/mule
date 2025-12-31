@@ -1,0 +1,20 @@
+# Claude Code Remote - Python 依赖
+
+# Web 框架
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+
+# 数据验证
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Claude SDK
+anthropic>=0.40.0
+
+# 工具
+python-dotenv>=1.0.0
+python-multipart>=0.0.6
+
+# 异步支持
+aiofiles>=23.2.0

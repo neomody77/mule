@@ -1,0 +1,124 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import '../config/app_config.dart';
+import '../models/workspace.dart';
+import '../models/file_node.dart';
+
+/// API 服务
+class ApiService {
+  late final Dio _dio;
+
+  ApiService() {
+    _dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 30),
+    ));
+
+    // 添加认证拦截器
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        debugPrint('[ApiService] Request: ${options.method} ${options.uri}');
+        options.headers['Authorization'] = 'Bearer ${AppConfig.apiToken}';
+        options.headers['X-API-Token'] = AppConfig.apiToken;
+        return handler.next(options);
+      },
+      onResponse: (response, handler) {
+        debugPrint('[ApiService] Response: ${response.statusCode}');
+        return handler.next(response);
+      },
+      onError: (error, handler) {
+        debugPrint('[ApiService] Error: ${error.message}');
+        return handler.next(error);
+      },
+    ));
+  }
+
+  String get _baseUrl => AppConfig.httpBaseUrl;
+
+  /// 健康检查
+  Future<bool> healthCheck() async {
+    try {
+      final response = await _dio.get('$_baseUrl/health');
+      return response.data['status'] == 'healthy';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// 获取服务器信息
+  Future<Map<String, dynamic>> getServerInfo() async {
+    final response = await _dio.get('$_baseUrl/');
+    return response.data;
+  }
+
+  // ==================== 工作区 API ====================
+
+  /// 列出所有工作区
+  Future<List<Workspace>> listWorkspaces() async {
+    final response = await _dio.get('$_baseUrl/api/workspaces');
+    final List<dynamic> data = response.data;
+    return data.map((json) => Workspace.fromJson(json)).toList();
+  }
+
+  /// 创建工作区
+  Future<Workspace> createWorkspace({
+    required String name,
+    String? description,
+  }) async {
+    final response = await _dio.post(
+      '$_baseUrl/api/workspaces',
+      data: {
+        'name': name,
+        'description': description,
+      },
+    );
+    return Workspace.fromJson(response.data);
+  }
+
+  /// 获取工作区详情
+  Future<Workspace> getWorkspace(String workspaceId) async {
+    final response = await _dio.get('$_baseUrl/api/workspaces/$workspaceId');
+    return Workspace.fromJson(response.data);
+  }
+
+  /// 删除工作区（软删除）
+  Future<void> deleteWorkspace(String workspaceId, {bool permanent = false}) async {
+    await _dio.delete(
+      '$_baseUrl/api/workspaces/$workspaceId',
+      queryParameters: {'permanent': permanent},
+    );
+  }
+
+  /// 列出回收站（冥府）
+  Future<List<Workspace>> listTrash() async {
+    final response = await _dio.get('$_baseUrl/api/workspaces/trash/list');
+    final List<dynamic> data = response.data;
+    return data.map((json) => Workspace.fromJson(json)).toList();
+  }
+
+  /// 恢复工作区（还魂）
+  Future<Workspace> restoreWorkspace(String workspaceId) async {
+    final response = await _dio.post('$_baseUrl/api/workspaces/$workspaceId/restore');
+    return Workspace.fromJson(response.data);
+  }
+
+  // ==================== 文件 API ====================
+
+  /// 列出工作区文件
+  Future<List<FileNode>> listFiles(String workspaceId, {String path = ''}) async {
+    final response = await _dio.get(
+      '$_baseUrl/api/workspaces/$workspaceId/files',
+      queryParameters: {'path': path},
+    );
+    final List<dynamic> files = response.data['files'];
+    return files.map((json) => FileNode.fromJson(json)).toList();
+  }
+
+  /// 读取文件内容
+  Future<String> readFile(String workspaceId, String filePath) async {
+    final response = await _dio.get(
+      '$_baseUrl/api/workspaces/$workspaceId/files/$filePath',
+    );
+    return response.data['content'];
+  }
+}
