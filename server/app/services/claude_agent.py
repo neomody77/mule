@@ -59,8 +59,12 @@ class ClaudeCodeAgent:
         """处理 stderr 输出"""
         logger.warning(f"Claude CLI stderr: {message}")
 
-    def _get_options(self) -> ClaudeAgentOptions:
-        """获取 Agent SDK 配置"""
+    def _get_options(self, resume_session: bool = False) -> ClaudeAgentOptions:
+        """获取 Agent SDK 配置
+
+        Args:
+            resume_session: 是否续接之前的会话
+        """
         options = ClaudeAgentOptions(
             # 允许的工具 - 使用 SDK 内置工具
             allowed_tools=[
@@ -79,6 +83,8 @@ class ClaudeCodeAgent:
             stderr=self._stderr_callback,
             # 使用系统 Claude CLI（已登录）
             cli_path=SYSTEM_CLAUDE_CLI,
+            # 续接之前的会话
+            resume=self.session_id if resume_session and self.session_id else None,
             # 系统提示
             system_prompt=f"""你是一个专业的编程助手，在远程服务器上帮助用户进行代码操作。
 
@@ -92,7 +98,9 @@ class ClaudeCodeAgent:
 - Glob: 按模式查找文件
 - Grep: 搜索文件内容
 
-请根据用户的需求，使用这些工具来完成任务。在执行操作前，先理解用户意图，必要时先查看相关文件。"""
+请根据用户的需求，使用这些工具来完成任务。在执行操作前，先理解用户意图，必要时先查看相关文件。
+
+注意：忽略 .workspace_meta.json 文件，这是系统内部文件。"""
         )
 
         if SYSTEM_CLAUDE_CLI:
@@ -110,7 +118,12 @@ class ClaudeCodeAgent:
             dict: 事件字典，格式为 {"event": str, "data": dict}
         """
         try:
-            options = self._get_options()
+            # 判断是否需要续接会话
+            resume_session = self.session_id is not None
+            options = self._get_options(resume_session=resume_session)
+
+            if resume_session:
+                logger.info(f"Resuming session: {self.session_id}")
             logger.info(f"Executing prompt: {prompt[:100]}...")
 
             # 记录任务开始

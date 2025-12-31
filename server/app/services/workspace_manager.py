@@ -62,6 +62,10 @@ class WorkspaceManager:
 
         workspace_path.mkdir(parents=True)
 
+        # 创建 .claudeignore 文件，忽略系统文件
+        claudeignore_path = workspace_path / ".claudeignore"
+        claudeignore_path.write_text(".workspace_meta.json\n.claudeignore\n")
+
         now = datetime.now()
         meta = {
             "id": workspace_id,
@@ -422,6 +426,11 @@ class WorkspaceManager:
 
         if not workspace_path.exists():
             workspace_path.mkdir(parents=True)
+
+        # 创建 .claudeignore 文件
+        claudeignore_path = workspace_path / ".claudeignore"
+        if not claudeignore_path.exists():
+            claudeignore_path.write_text(".workspace_meta.json\n.claudeignore\n")
 
         now = datetime.now()
         meta = {
