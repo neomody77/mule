@@ -83,3 +83,14 @@ htmlcov/
 *.bak
 *.tmp
 *.temp
+
+# Python data directories
+data/
+workspaces/
+uv.lock
+
+# 生产静态文件 (由 CI/CD 生成)
+static/
+
+# 旧目录 (已废弃)
+server/

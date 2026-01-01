@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # 服务器配置
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8080
     debug: bool = False
 
     # 数据目录 - 存储日志、元数据等
@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     # WebSocket 配置
     ws_heartbeat_interval: int = 30  # 秒
+
+    # Docker 隔离配置
+    use_docker_isolation: bool = False  # 是否使用 Docker 隔离 workspace
+    docker_image: str = "mule-workspace:latest"  # workspace 容器镜像
 
     model_config = {
         "env_file": ".env",
