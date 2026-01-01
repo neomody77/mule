@@ -2,10 +2,16 @@
 Google ADK Agent - 基于 Google Agent Development Kit 的 Agent
 
 使用 Google ADK 替代 Claude Agent SDK，支持：
-- Gemini 模型
+- Gemini 模型（原生支持）
+- 第三方模型（通过 LiteLLM，如 OpenRouter、OpenAI、Anthropic）
 - 自定义工具（文件操作、命令执行等）
 - 流式响应
 - 会话管理
+
+第三方 API 配置示例（OpenRouter）：
+    ADK_MODEL=openrouter/anthropic/claude-3.5-sonnet
+    ADK_API_BASE=https://openrouter.ai/api/v1
+    ADK_API_KEY=sk-or-xxx
 """
 import asyncio
 import json
@@ -13,12 +19,11 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Union
 
-from google.adk.agents import Agent
+from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
-from google.adk.events import Event
 
 from app.config import settings
 from app.services.agent_logger import AgentLogger, agent_logger_manager
@@ -27,6 +32,49 @@ from app.services.adk_tools import ALL_TOOLS
 from app.prompts import get_system_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _create_model():
+    """
+    创建模型实例
+
+    根据配置决定使用：
+    - Gemini 模型（直接使用模型名称字符串）
+    - LiteLLM 模型（使用 LiteLlm 包装器）
+
+    环境变量：
+    - ADK_MODEL: 模型名称，如 "gemini-2.0-flash" 或 "openrouter/anthropic/claude-3.5-sonnet"
+    - ADK_API_BASE: 自定义 API 端点（用于 LiteLLM）
+    - ADK_API_KEY: API 密钥（用于 LiteLLM）
+    """
+    model_name = os.environ.get("ADK_MODEL", "gemini-2.0-flash")
+    api_base = os.environ.get("ADK_API_BASE", "")
+    api_key = os.environ.get("ADK_API_KEY", "")
+
+    # 判断是否需要使用 LiteLLM
+    # LiteLLM 模型名称通常包含 "/" 如 "openai/gpt-4" 或 "openrouter/..."
+    use_litellm = (
+        "/" in model_name and not model_name.startswith("gemini")
+    ) or api_base
+
+    if use_litellm:
+        try:
+            from google.adk.models.lite_llm import LiteLlm
+
+            kwargs = {"model": model_name}
+            if api_base:
+                kwargs["api_base"] = api_base
+            if api_key:
+                kwargs["api_key"] = api_key
+
+            logger.info(f"Using LiteLLM model: {model_name}, api_base: {api_base or 'default'}")
+            return LiteLlm(**kwargs)
+        except ImportError:
+            logger.warning("LiteLLM not available, falling back to direct model name")
+            return model_name
+    else:
+        logger.info(f"Using Gemini model: {model_name}")
+        return model_name
 
 
 class ADKAgent:
@@ -65,11 +113,11 @@ class ADKAgent:
         # 获取系统提示
         system_prompt = get_system_prompt(str(self.workspace_path))
 
-        # 获取模型配置
-        model = os.environ.get("ADK_MODEL", "gemini-2.0-flash")
+        # 创建模型（支持 Gemini 或 LiteLLM）
+        model = _create_model()
 
-        # 创建 Agent
-        self.agent = Agent(
+        # 创建 Agent（使用 LlmAgent 支持更多配置）
+        self.agent = LlmAgent(
             name="coding_agent",
             model=model,
             description="A coding assistant that helps with software development tasks",
