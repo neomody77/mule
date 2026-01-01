@@ -8,7 +8,7 @@ FROM ubuntu:22.04
 # 避免交互式安装
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 安装基础开发工具 + gosu (用于动态切换用户)
+# 安装基础开发工具 + gosu (用于动态切换用户) + sudo
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     jq \
     unzip \
     gosu \
+    sudo \
     ca-certificates \
     gnupg \
     && rm -rf /var/lib/apt/lists/*

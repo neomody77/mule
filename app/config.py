@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+
+# 加载 .env 文件到 os.environ（让 Docker 容器可以继承）
+load_dotenv()
 
 
 class Settings(BaseSettings):

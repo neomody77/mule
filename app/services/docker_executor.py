@@ -139,10 +139,10 @@ class DockerExecutor:
             environment["USER_UID"] = str(HOST_UID)
             environment["USER_GID"] = str(HOST_GID)
 
-            # 从宿主机继承代理设置和 API 认证
+            # 从宿主机继承 API 认证（不继承代理设置）
             inherit_keys = [
-                'http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'no_proxy', 'NO_PROXY',
                 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+                'DISABLE_TELEMETRY',
             ]
             for key in inherit_keys:
                 if key in os.environ:
@@ -172,6 +172,10 @@ class DockerExecutor:
 
             self._containers[workspace_id] = container
             logger.info(f"Container {container_name} created and started")
+
+            # 等待 entrypoint 脚本创建 coder 用户
+            await asyncio.sleep(1)
+
             return container
 
         except Exception as e:

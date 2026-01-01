@@ -18,6 +18,10 @@ if ! id -u $USER_NAME > /dev/null 2>&1; then
     useradd -u $USER_UID -g $USER_GID -m -s /bin/bash $USER_NAME
 fi
 
+# 配置 sudo 免密码
+echo "$USER_NAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USER_NAME
+chmod 440 /etc/sudoers.d/$USER_NAME
+
 # 确保 workspace 目录权限正确
 chown $USER_UID:$USER_GID /workspace
 

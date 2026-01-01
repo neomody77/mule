@@ -444,32 +444,46 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
               targetId: 'session.input',
               label: 'Message input',
               controller: _inputController,
-              child: TextField(
-                controller: _inputController,
-                focusNode: _focusNode,
-                enabled: isConnected, // 只要连接就可以输入
-                decoration: InputDecoration(
-                  hintText: !isConnected
-                      ? 'Waiting for connection...'
-                      : isProcessing
-                          ? 'Type to provide feedback...'
-                          : 'Type a message...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
+              child: Focus(
+                onKeyEvent: (node, event) {
+                  // Web 端: Enter 发送, Shift+Enter 换行
+                  if (event is KeyDownEvent &&
+                      event.logicalKey == LogicalKeyboardKey.enter &&
+                      !HardwareKeyboard.instance.isShiftPressed) {
+                    if (isConnected && _inputController.text.trim().isNotEmpty) {
+                      _sendMessage();
+                    }
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: TextField(
+                  controller: _inputController,
+                  focusNode: _focusNode,
+                  enabled: isConnected, // 只要连接就可以输入
+                  decoration: InputDecoration(
+                    hintText: !isConnected
+                        ? 'Waiting for connection...'
+                        : isProcessing
+                            ? 'Type to provide feedback...'
+                            : 'Type a message...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                   ),
-                  filled: true,
-                  fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
+                  maxLines: 4,
+                  minLines: 1,
+                  // 使用 newline 让安卓键盘显示换行键（不是发送键）
+                  textInputAction: TextInputAction.newline,
+                  keyboardType: TextInputType.multiline,
                 ),
-                maxLines: 4,
-                minLines: 1,
-                // 使用 newline 让安卓键盘显示换行键（不是发送键）
-                textInputAction: TextInputAction.newline,
-                keyboardType: TextInputType.multiline,
               ),
             ),
           ),
