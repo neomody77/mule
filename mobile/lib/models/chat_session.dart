@@ -10,6 +10,15 @@ enum SessionConnectionState {
   error,
 }
 
+/// 待执行的提示
+class PendingPrompt {
+  final String id;
+  final String content;
+  final int position;
+
+  PendingPrompt({required this.id, required this.content, required this.position});
+}
+
 /// 聊天会话模型
 class ChatSession {
   final String id;
@@ -24,6 +33,7 @@ class ChatSession {
   bool isProcessing;
   String? error;
   bool hasUnread; // 是否有未读消息（用户离开页面后收到的消息）
+  List<PendingPrompt> pendingPrompts; // 排队中的消息
 
   ChatSession({
     required this.id,
@@ -38,9 +48,11 @@ class ChatSession {
     this.isProcessing = false,
     this.error,
     this.hasUnread = false,
+    List<PendingPrompt>? pendingPrompts,
   })  : createdAt = createdAt ?? DateTime.now(),
         lastActiveAt = lastActiveAt ?? DateTime.now(),
-        messages = messages ?? [];
+        messages = messages ?? [],
+        pendingPrompts = pendingPrompts ?? [];
 
   /// 是否已连接
   bool get isConnected => connectionState == SessionConnectionState.connected;
@@ -104,6 +116,7 @@ class ChatSession {
     bool? isProcessing,
     String? error,
     bool? hasUnread,
+    List<PendingPrompt>? pendingPrompts,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -118,6 +131,7 @@ class ChatSession {
       isProcessing: isProcessing ?? this.isProcessing,
       error: error,
       hasUnread: hasUnread ?? this.hasUnread,
+      pendingPrompts: pendingPrompts ?? List.from(this.pendingPrompts),
     );
   }
 

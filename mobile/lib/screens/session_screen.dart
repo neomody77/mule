@@ -241,6 +241,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                       ),
           ),
 
+          // 排队中的消息（暂存区）
+          if (session != null && session.pendingPrompts.isNotEmpty)
+            _buildPendingPrompts(session.pendingPrompts),
+
           // 输入栏
           _buildInputBar(session),
         ],
@@ -348,6 +352,66 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
               color: ZiaOlive.shade200,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPendingPrompts(List<PendingPrompt> pendingPrompts) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: ZiaOlive.shade600.withValues(alpha: 0.1),
+        border: Border(
+          top: BorderSide(
+            color: ZiaOlive.shade400.withValues(alpha: 0.3),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.hourglass_empty,
+                size: 14,
+                color: ZiaOlive.shade400,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Queued (${pendingPrompts.length})',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: ZiaOlive.shade400,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ...pendingPrompts.map((prompt) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: ZiaOlive.shade600.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    prompt.content.length > 50
+                        ? '${prompt.content.substring(0, 50)}...'
+                        : prompt.content,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: ZiaOlive.shade300,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )),
         ],
       ),
     );

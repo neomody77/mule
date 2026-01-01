@@ -261,6 +261,15 @@ class SessionNotifier extends StateNotifier<SessionState> {
       case 'status':
         _handleStatus(sessionId, event.data);
         break;
+      case 'prompt_queued':
+        _handlePromptQueued(sessionId, event.data);
+        break;
+      case 'prompt_dequeued':
+        _handlePromptDequeued(sessionId, event.data);
+        break;
+      case 'session_title_updated':
+        _handleSessionTitleUpdated(sessionId, event.data);
+        break;
     }
   }
 
@@ -273,6 +282,15 @@ class SessionNotifier extends StateNotifier<SessionState> {
     if (session.messages.isNotEmpty &&
         session.messages.last.type == MessageType.status) {
       _removeLastMessage(sessionId);
+    }
+
+    // 去重：如果最后一条消息内容相同，跳过
+    final updatedSession = state.getSession(sessionId);
+    if (updatedSession != null &&
+        updatedSession.messages.isNotEmpty &&
+        updatedSession.messages.last.type == MessageType.assistant &&
+        updatedSession.messages.last.content == text) {
+      return;
     }
 
     // 每次都添加新消息（按顺序展示）
@@ -295,8 +313,22 @@ class SessionNotifier extends StateNotifier<SessionState> {
       _removeLastMessage(sessionId);
     }
 
+    final toolId = data['id'] as String? ?? const Uuid().v4();
+
+    // 去重：检查是否已有相同 toolId 的消息
+    final updatedSession = state.getSession(sessionId);
+    if (updatedSession != null) {
+      for (final msg in updatedSession.messages) {
+        if (msg.type == MessageType.toolCall &&
+            msg.toolCalls.isNotEmpty &&
+            msg.toolCalls.first.id == toolId) {
+          return; // 已存在，跳过
+        }
+      }
+    }
+
     final toolCall = ToolCall(
-      id: data['id'] as String? ?? const Uuid().v4(),
+      id: toolId,
       name: data['name'] as String? ?? 'unknown',
       description: data['description'] as String?,
       isExecuting: true,
@@ -343,7 +375,18 @@ class SessionNotifier extends StateNotifier<SessionState> {
   }
 
   void _handleMessageEnd(String sessionId) {
+    final session = state.getSession(sessionId);
+    if (session == null) return;
+
+    // 如果最后一条是 status 消息（如 Thinking...），移除它
+    if (session.messages.isNotEmpty &&
+        session.messages.last.type == MessageType.status) {
+      _removeLastMessage(sessionId);
+    }
+
+    // 停止最后一条消息的 streaming 状态
     _updateLastMessage(sessionId, (m) => m.copyWith(isStreaming: false));
+
     _updateSession(sessionId, (s) => s.copyWith(isProcessing: false));
   }
 
@@ -369,6 +412,33 @@ class SessionNotifier extends StateNotifier<SessionState> {
     } else if (status == 'completed' || status == 'failed') {
       _updateSession(sessionId, (s) => s.copyWith(isProcessing: false));
     }
+  }
+
+  void _handlePromptQueued(String sessionId, Map<String, dynamic> data) {
+    final id = data['id'] as String? ?? '';
+    final content = data['content'] as String? ?? '';
+    final position = data['position'] as int? ?? 1;
+
+    final session = state.getSession(sessionId);
+    if (session == null) return;
+
+    final pending = PendingPrompt(id: id, content: content, position: position);
+    final newPendingList = [...session.pendingPrompts, pending];
+
+    _updateSession(sessionId, (s) => s.copyWith(pendingPrompts: newPendingList));
+  }
+
+  void _handlePromptDequeued(String sessionId, Map<String, dynamic> data) {
+    // 服务端发送 ids 列表，表示所有被处理的 prompts
+    final ids = (data['ids'] as List<dynamic>?)?.cast<String>() ?? [];
+
+    final session = state.getSession(sessionId);
+    if (session == null) return;
+
+    // 移除所有匹配 id 的 pending prompts
+    final idsSet = ids.toSet();
+    final newPendingList = session.pendingPrompts.where((p) => !idsSet.contains(p.id)).toList();
+    _updateSession(sessionId, (s) => s.copyWith(pendingPrompts: newPendingList));
   }
 
   void _handleStatus(String sessionId, Map<String, dynamic> data) {
@@ -423,6 +493,15 @@ class SessionNotifier extends StateNotifier<SessionState> {
         ),
       );
       _updateSession(sessionId, (s) => s.copyWith(isProcessing: false));
+    }
+  }
+
+  void _handleSessionTitleUpdated(String sessionId, Map<String, dynamic> data) {
+    final title = data['title'] as String?;
+    if (title != null && title.isNotEmpty) {
+      debugPrint('[SessionNotifier] Session title updated: $title');
+      _updateSession(sessionId, (s) => s.copyWith(name: title));
+      _save();
     }
   }
 

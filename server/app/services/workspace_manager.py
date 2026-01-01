@@ -408,6 +408,47 @@ class WorkspaceManager:
 
         return file_path.read_text(encoding="utf-8")
 
+    def get_session_id(self, workspace_id: str, agent_session_id: str) -> Optional[str]:
+        """获取 Claude Agent session ID"""
+        meta = self._load_meta(workspace_id)
+        if meta:
+            sessions = meta.get("sessions", {})
+            return sessions.get(agent_session_id)
+        return None
+
+    def set_session_id(self, workspace_id: str, agent_session_id: str, session_id: str):
+        """保存 Claude Agent session ID"""
+        meta = self._load_meta(workspace_id)
+        if meta:
+            if "sessions" not in meta:
+                meta["sessions"] = {}
+            meta["sessions"][agent_session_id] = session_id
+            self._save_meta(workspace_id, meta)
+
+    def delete_session(self, workspace_id: str, agent_session_id: str):
+        """删除 session"""
+        meta = self._load_meta(workspace_id)
+        if meta and "sessions" in meta:
+            if agent_session_id in meta["sessions"]:
+                del meta["sessions"][agent_session_id]
+                self._save_meta(workspace_id, meta)
+
+    def get_session_title(self, workspace_id: str, agent_session_id: str) -> Optional[str]:
+        """获取会话标题"""
+        meta = self._load_meta(workspace_id)
+        if meta:
+            titles = meta.get("session_titles", {})
+            return titles.get(agent_session_id)
+        return None
+
+    def set_session_title(self, workspace_id: str, agent_session_id: str, title: str):
+        """保存会话标题"""
+        meta = self._load_meta(workspace_id)
+        if meta:
+            if "session_titles" not in meta:
+                meta["session_titles"] = {}
+            meta["session_titles"][agent_session_id] = title
+            self._save_meta(workspace_id, meta)
 
     def ensure_default_workspace(self) -> WorkspaceInfo:
         """确保默认工作空间存在（用于后台任务、临时任务等）"""

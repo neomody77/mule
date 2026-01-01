@@ -10,7 +10,9 @@ from app.api.auth import verify_ws_token
 from app.config import settings
 from app.services.claude_agent import ClaudeCodeAgent
 from app.services.workspace_manager import workspace_manager
-from app.services.task_manager import task_manager, TaskStatus
+from app.services.title_generator import generate_session_title
+from uuid import uuid4
+from app.services.task_manager import task_manager, TaskStatus, Task
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -24,6 +26,7 @@ class UnifiedConnectionManager:
     - 服务器级共享连接 (/ws)
     - 多 session 订阅/取消订阅
     - 向后兼容旧的 session 级连接 (/ws/{workspace_id}/{session_id})
+    - 消息队列：任务执行中收到的消息会排队等待
     """
 
     def __init__(self):
@@ -37,6 +40,8 @@ class UnifiedConnectionManager:
         self.agents: dict[str, dict[str, ClaudeCodeAgent]] = {}
         # 连接 ID 计数器
         self._conn_id_counter = 0
+        # 消息队列: task_key -> list of (prompt_id, content)
+        self.pending_prompts: dict[str, list[tuple[str, str]]] = {}
 
     def _next_conn_id(self) -> str:
         self._conn_id_counter += 1
@@ -152,6 +157,52 @@ class UnifiedConnectionManager:
             )
         return self.agents[workspace_id][session_id]
 
+    async def process_pending_prompts(self, task_key: str):
+        """处理队列中的所有待执行提示（合并为一次请求）"""
+        if task_key not in self.pending_prompts or not self.pending_prompts[task_key]:
+            return
+
+        # 取出所有待执行的 prompts
+        pending_list = self.pending_prompts[task_key]
+        self.pending_prompts[task_key] = []
+
+        # 解析 workspace_id 和 session_id
+        parts = task_key.split(":", 1)
+        if len(parts) != 2:
+            logger.error(f"Invalid task_key format: {task_key}")
+            return
+
+        workspace_id, session_id = parts
+
+        # 合并所有待执行的 prompts
+        prompt_ids = [p[0] for p in pending_list]
+        combined_content = "\n\n---\n\n".join([p[1] for p in pending_list])
+
+        logger.info(f"Processing {len(pending_list)} queued prompts for {task_key}: {prompt_ids}")
+
+        # 通知客户端开始处理队列中的所有消息
+        await self.send_to_session(workspace_id, session_id, {
+            "event": "prompt_dequeued",
+            "data": {
+                "ids": prompt_ids,
+                "count": len(pending_list),
+            }
+        })
+
+        # 创建并启动新任务（合并后的内容）
+        task = task_manager.create_task(task_key, combined_content)
+        await self.send_to_session(workspace_id, session_id, {
+            "event": "task_info",
+            "data": {
+                "task_id": task.id,
+                "status": task.status.value,
+                "prompt": combined_content,
+            }
+        })
+
+        agent = self.get_or_create_agent(workspace_id, session_id)
+        task_manager.start_task(task, agent)
+
 
 manager = UnifiedConnectionManager()
 
@@ -189,6 +240,8 @@ async def unified_websocket(
 
     # 注册的回调函数 (session_key -> callback)
     registered_callbacks: dict[str, Callable] = {}
+    # 注册的完成回调 (session_key -> callback)
+    registered_completion_callbacks: dict[str, Callable] = {}
 
     try:
         # 启动心跳任务
@@ -197,7 +250,7 @@ async def unified_websocket(
         while True:
             try:
                 data = await websocket.receive_json()
-                await handle_unified_message(conn_id, data, registered_callbacks)
+                await handle_unified_message(conn_id, data, registered_callbacks, registered_completion_callbacks)
             except json.JSONDecodeError:
                 await manager.send_to_connection(conn_id, {
                     "event": "error",
@@ -213,6 +266,8 @@ async def unified_websocket(
         # 取消注册所有回调
         for callback_key, callback in registered_callbacks.items():
             task_manager.unregister_callback(callback_key, callback)
+        for callback_key, callback in registered_completion_callbacks.items():
+            task_manager.unregister_completion_callback(callback_key, callback)
         manager.disconnect(conn_id)
 
 
@@ -226,7 +281,7 @@ async def heartbeat_loop_unified(conn_id: str):
             break
 
 
-async def handle_unified_message(conn_id: str, data: dict, registered_callbacks: dict):
+async def handle_unified_message(conn_id: str, data: dict, registered_callbacks: dict, registered_completion_callbacks: dict = None):
     """处理统一连接的消息"""
     msg_type = data.get("type")
     workspace_id = data.get("workspace_id")
@@ -269,6 +324,35 @@ async def handle_unified_message(conn_id: str, data: dict, registered_callbacks:
             registered_callbacks[callback_key] = event_callback
             task_manager.register_callback(callback_key, event_callback)
 
+        # 注册完成回调（处理队列中的消息 + 生成标题）
+        if registered_completion_callbacks is not None and callback_key not in registered_completion_callbacks:
+            async def completion_callback(task: Task, key=callback_key, ws_id=workspace_id, ss_id=session_id):
+                # 处理队列中的消息
+                await manager.process_pending_prompts(key)
+
+                # 如果是首次完成的任务，尝试生成标题
+                # 检查是否已有标题
+                existing_title = workspace_manager.get_session_title(ws_id, ss_id)
+                if not existing_title and task.status == TaskStatus.COMPLETED:
+                    try:
+                        title = await generate_session_title(
+                            user_message=task.prompt,
+                            assistant_response=task.assistant_text,
+                        )
+                        if title:
+                            workspace_manager.set_session_title(ws_id, ss_id, title)
+                            # 通知客户端标题更新
+                            await manager.send_to_session(ws_id, ss_id, {
+                                "event": "session_title_updated",
+                                "data": {"title": title}
+                            })
+                            logger.info(f"Generated title for {ws_id}:{ss_id}: {title}")
+                    except Exception as e:
+                        logger.error(f"Failed to generate title: {e}")
+
+            registered_completion_callbacks[callback_key] = completion_callback
+            task_manager.register_completion_callback(callback_key, completion_callback)
+
         # 总是返回订阅成功
         await manager.send_to_connection(conn_id, {
             "event": "subscribed",
@@ -284,10 +368,11 @@ async def handle_unified_message(conn_id: str, data: dict, registered_callbacks:
                     "task_id": current_task.id,
                     "status": current_task.status.value,
                     "prompt": current_task.prompt,
+                    "events_count": len(current_task.events),
                 }
             })
-            for task_event in current_task.events:
-                await manager.send_to_session(workspace_id, session_id, task_event.to_dict())
+            # 不发送历史事件 - 客户端应该已经有了（通过实时回调）
+            # 如果客户端需要历史，可以发送 sync 请求
         return
 
     # 取消订阅消息
@@ -332,6 +417,12 @@ async def handle_unified_message(conn_id: str, data: dict, registered_callbacks:
                     await manager.send_to_session(ws_id, ss_id, event)
                 registered_callbacks[callback_key] = event_callback
                 task_manager.register_callback(callback_key, event_callback)
+            # 注册完成回调
+            if registered_completion_callbacks is not None and callback_key not in registered_completion_callbacks:
+                async def completion_callback(task: Task, key=callback_key):
+                    await manager.process_pending_prompts(key)
+                registered_completion_callbacks[callback_key] = completion_callback
+                task_manager.register_completion_callback(callback_key, completion_callback)
         else:
             await manager.send_to_connection(conn_id, {
                 "event": "error",
@@ -352,10 +443,24 @@ async def handle_unified_message(conn_id: str, data: dict, registered_callbacks:
 
         current_task = task_manager.get_current_task(task_key)
         if current_task and current_task.status == TaskStatus.RUNNING:
+            # 任务执行中，将消息加入队列
+            if task_key not in manager.pending_prompts:
+                manager.pending_prompts[task_key] = []
+
+            # 生成唯一 ID
+            prompt_id = str(uuid4())[:8]
+            manager.pending_prompts[task_key].append((prompt_id, content))
+
+            # 通知客户端消息已排队
             await manager.send_to_session(workspace_id, session_id, {
-                "event": "error",
-                "data": {"message": "A task is already running in this session"}
+                "event": "prompt_queued",
+                "data": {
+                    "id": prompt_id,
+                    "content": content,
+                    "position": len(manager.pending_prompts[task_key]),
+                }
             })
+            logger.info(f"Prompt {prompt_id} queued for {task_key}, position: {len(manager.pending_prompts[task_key])}")
             return
 
         task = task_manager.create_task(task_key, content)

@@ -22,6 +22,8 @@ from claude_agent_sdk import (
 )
 
 from app.services.agent_logger import AgentLogger, agent_logger_manager
+from app.services.workspace_manager import workspace_manager
+from app.prompts import get_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +45,15 @@ class ClaudeCodeAgent:
 
     def __init__(self, workspace_path: str, workspace_id: str = "", agent_session_id: str = ""):
         self.workspace_path = Path(workspace_path).resolve()
-        self.session_id: str | None = None
         self.workspace_id = workspace_id
         self.agent_session_id = agent_session_id
+
+        # 从持久化存储恢复 session_id
+        self.session_id: str | None = None
+        if workspace_id and agent_session_id:
+            self.session_id = workspace_manager.get_session_id(workspace_id, agent_session_id)
+            if self.session_id:
+                logger.info(f"Restored session {self.session_id} for {workspace_id}:{agent_session_id}")
 
         # 确保工作区存在
         self.workspace_path.mkdir(parents=True, exist_ok=True)
@@ -77,30 +85,16 @@ class ClaudeCodeAgent:
             ],
             # 工作目录
             cwd=str(self.workspace_path),
-            # 权限模式 - 自动接受编辑操作
-            permission_mode="acceptEdits",
+            # 权限模式 - 跳过所有权限检查（服务端运行）
+            permission_mode="bypassPermissions",
             # stderr 回调 - 捕获错误信息
             stderr=self._stderr_callback,
             # 使用系统 Claude CLI（已登录）
             cli_path=SYSTEM_CLAUDE_CLI,
             # 续接之前的会话
             resume=self.session_id if resume_session and self.session_id else None,
-            # 系统提示
-            system_prompt=f"""你是一个专业的编程助手，在远程服务器上帮助用户进行代码操作。
-
-当前工作目录: {self.workspace_path}
-
-你可以使用以下工具:
-- Read: 读取文件内容
-- Write: 创建新文件
-- Edit: 编辑现有文件
-- Bash: 执行 shell 命令
-- Glob: 按模式查找文件
-- Grep: 搜索文件内容
-
-请根据用户的需求，使用这些工具来完成任务。在执行操作前，先理解用户意图，必要时先查看相关文件。
-
-注意：忽略 .workspace_meta.json 文件，这是系统内部文件。"""
+            # 系统提示 - 使用增强版 prompt
+            system_prompt=get_system_prompt(str(self.workspace_path)),
         )
 
         if SYSTEM_CLAUDE_CLI:
@@ -247,6 +241,13 @@ class ClaudeCodeAgent:
                         }
                     }
                     self.session_id = message.session_id
+                    # 持久化 session_id
+                    if self.workspace_id and self.agent_session_id and self.session_id:
+                        workspace_manager.set_session_id(
+                            self.workspace_id,
+                            self.agent_session_id,
+                            self.session_id
+                        )
                     break
 
         except Exception as e:

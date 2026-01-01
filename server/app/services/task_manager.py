@@ -52,6 +52,8 @@ class Task:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
+    # 用于标题生成
+    assistant_text: str = ""  # 收集的助手响应文本
 
     def add_event(self, event: str, data: dict):
         """添加事件"""
@@ -79,6 +81,7 @@ class TaskManager:
         self.workspace_tasks: dict[str, list[str]] = {}  # workspace_id -> [task_ids]
         self.running_tasks: dict[str, asyncio.Task] = {}  # task_id -> asyncio.Task
         self._event_callbacks: dict[str, list[callable]] = {}  # workspace_id -> callbacks
+        self._completion_callbacks: dict[str, list[callable]] = {}  # workspace_id -> callbacks (called when task completes)
 
     def create_task(self, workspace_id: str, prompt: str) -> Task:
         """创建任务"""
@@ -129,6 +132,13 @@ class TaskManager:
                 # 保存事件
                 task.add_event(event_dict["event"], event_dict["data"])
 
+                # 收集助手文本（用于标题生成）
+                if event_dict["event"] == "text_delta":
+                    text = event_dict["data"].get("text", "")
+                    # 只收集前 500 字符用于标题生成
+                    if len(task.assistant_text) < 500:
+                        task.assistant_text += text
+
                 # 通知已注册的回调
                 await self._notify_event(task.workspace_id, event_dict)
 
@@ -157,6 +167,9 @@ class TaskManager:
             if task.id in self.running_tasks:
                 del self.running_tasks[task.id]
 
+            # 通知任务完成回调
+            await self._notify_completion(task.workspace_id, task)
+
     def start_task(self, task: Task, agent) -> asyncio.Task:
         """启动任务（返回 asyncio.Task）"""
         async_task = asyncio.create_task(self.execute_task(task, agent))
@@ -183,6 +196,32 @@ class TaskManager:
                 self._event_callbacks[workspace_id].remove(callback)
             except ValueError:
                 pass
+
+    def register_completion_callback(self, workspace_id: str, callback: callable):
+        """注册任务完成回调"""
+        if workspace_id not in self._completion_callbacks:
+            self._completion_callbacks[workspace_id] = []
+        self._completion_callbacks[workspace_id].append(callback)
+
+    def unregister_completion_callback(self, workspace_id: str, callback: callable):
+        """注销任务完成回调"""
+        if workspace_id in self._completion_callbacks:
+            try:
+                self._completion_callbacks[workspace_id].remove(callback)
+            except ValueError:
+                pass
+
+    async def _notify_completion(self, workspace_id: str, task: Task):
+        """通知任务完成"""
+        callbacks = self._completion_callbacks.get(workspace_id, [])
+        for callback in callbacks:
+            try:
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(task)
+                else:
+                    callback(task)
+            except Exception as e:
+                logger.error(f"Completion callback error: {e}")
 
     async def _notify_event(self, workspace_id: str, event: dict):
         """通知所有注册的回调"""
