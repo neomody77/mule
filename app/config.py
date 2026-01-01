@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     use_docker_isolation: bool = False  # 是否使用 Docker 隔离 workspace
     docker_image: str = "mule-workspace:latest"  # workspace 容器镜像
 
+    # Agent 后端配置
+    use_google_adk: bool = False  # 使用 Google ADK 替代 Claude Agent SDK
+    adk_model: str = "gemini-2.0-flash"  # Google ADK 使用的模型
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

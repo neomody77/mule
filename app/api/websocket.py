@@ -11,9 +11,11 @@ from app.config import settings
 from app.services.claude_agent import ClaudeCodeAgent
 from app.services.workspace_manager import workspace_manager
 
-# 条件导入隔离版 Agent
+# 条件导入不同的 Agent 实现
 if settings.use_docker_isolation:
     from app.services.isolated_agent import IsolatedClaudeAgent
+if settings.use_google_adk:
+    from app.services.adk_agent import ADKAgent
 from app.services.title_generator import generate_session_title
 from uuid import uuid4
 from app.services.task_manager import task_manager, TaskStatus, Task
@@ -151,15 +153,26 @@ class UnifiedConnectionManager:
     def get_or_create_agent(self, workspace_id: str, session_id: str):
         """获取或创建 Agent（每个 session 独立）
 
-        根据配置选择使用普通 Agent 或 Docker 隔离版 Agent
+        根据配置选择使用:
+        - Google ADK Agent (use_google_adk=True)
+        - Docker 隔离版 Claude Agent (use_docker_isolation=True)
+        - 普通 Claude Agent (默认)
         """
         if workspace_id not in self.agents:
             self.agents[workspace_id] = {}
         if session_id not in self.agents[workspace_id]:
             workspace_path = settings.get_workspace_path(workspace_id)
 
-            if settings.use_docker_isolation:
-                # 使用 Docker 隔离版
+            if settings.use_google_adk:
+                # 使用 Google ADK
+                self.agents[workspace_id][session_id] = ADKAgent(
+                    workspace_path=str(workspace_path),
+                    workspace_id=workspace_id,
+                    agent_session_id=session_id,
+                )
+                logger.info(f"Created ADK agent for {workspace_id}:{session_id}")
+            elif settings.use_docker_isolation:
+                # 使用 Docker 隔离版 Claude
                 self.agents[workspace_id][session_id] = IsolatedClaudeAgent(
                     workspace_path=str(workspace_path),
                     workspace_id=workspace_id,
@@ -167,12 +180,13 @@ class UnifiedConnectionManager:
                 )
                 logger.info(f"Created isolated agent for {workspace_id}:{session_id}")
             else:
-                # 使用普通版
+                # 使用普通 Claude Agent
                 self.agents[workspace_id][session_id] = ClaudeCodeAgent(
                     workspace_path=str(workspace_path),
                     workspace_id=workspace_id,
                     agent_session_id=session_id,
                 )
+                logger.info(f"Created Claude agent for {workspace_id}:{session_id}")
 
         return self.agents[workspace_id][session_id]
 
