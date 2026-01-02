@@ -283,15 +283,15 @@ class DockerExecutor:
                 workdir="/workspace",
             )
 
-            # 流式读取输出
-            output = self.client.api.exec_start(exec_instance['Id'], stream=True)
+            # 流式读取输出 (使用 demux=True 分离 stdout/stderr)
+            output = self.client.api.exec_start(exec_instance['Id'], stream=True, demux=True)
 
             buffer = ""
-            for chunk in output:
-                if isinstance(chunk, bytes):
-                    chunk = chunk.decode('utf-8', errors='replace')
-
-                buffer += chunk
+            for stdout_chunk, stderr_chunk in output:
+                # 只处理 stdout，忽略 stderr（Claude 的 JSON 输出在 stdout）
+                if stdout_chunk:
+                    chunk = stdout_chunk.decode('utf-8', errors='replace') if isinstance(stdout_chunk, bytes) else stdout_chunk
+                    buffer += chunk
 
                 # 按行处理
                 while '\n' in buffer:
