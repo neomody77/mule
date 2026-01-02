@@ -6,7 +6,7 @@ import socket
 from io import BytesIO
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
 
 from app.config import settings
@@ -62,15 +62,17 @@ async def get_connect_config(
 
 @router.get("/qrcode")
 async def get_connect_qrcode(
+    request: Request,
     name: Optional[str] = Query(None, description="服务器名称"),
-    host: Optional[str] = Query(None, description="自定义 host（默认自动检测局域网 IP）"),
-    https: bool = Query(False, description="是否使用 HTTPS"),
+    host: Optional[str] = Query(None, description="自定义 host（默认自动检测）"),
+    https: Optional[bool] = Query(None, description="是否使用 HTTPS"),
     size: int = Query(300, description="QR Code 尺寸（像素）", ge=100, le=1000),
 ):
     """
     生成连接配置的 QR Code 图片
 
     移动端扫描此二维码即可添加服务器
+    自动检测访问的 host 和协议
 
     Returns:
         PNG 图片
@@ -85,8 +87,21 @@ async def get_connect_qrcode(
             media_type="text/plain",
         )
 
+    # 自动从请求头获取 host 和协议
+    request_host = request.headers.get("host", "").split(":")[0]
+    request_scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+
+    actual_host = host or request_host or get_local_ip()
+    actual_https = https if https is not None else (request_scheme == "https")
+
+    # 如果是公网域名，使用默认端口
+    use_default_port = actual_host and not actual_host.replace(".", "").isdigit()
+
     # 生成配置 JSON
-    config = generate_connect_config(name=name, host=host, use_https=https)
+    config = generate_connect_config(name=name, host=actual_host, use_https=actual_https)
+    if use_default_port:
+        config["port"] = 443 if actual_https else 80
+
     config_json = json.dumps(config, ensure_ascii=False)
 
     # 生成 QR Code
@@ -122,25 +137,42 @@ async def get_connect_qrcode(
 
 @router.get("/qrcode/html")
 async def get_connect_qrcode_page(
+    request: Request,
     name: Optional[str] = Query(None, description="服务器名称"),
     host: Optional[str] = Query(None, description="自定义 host"),
-    https: bool = Query(False, description="是否使用 HTTPS"),
+    https: Optional[bool] = Query(None, description="是否使用 HTTPS"),
 ):
     """
     返回一个包含 QR Code 的 HTML 页面
 
     方便在浏览器中打开并用手机扫描
+
+    会自动检测访问的 host 和协议（可通过参数覆盖）
     """
-    config = generate_connect_config(name=name, host=host, use_https=https)
+    # 自动从请求头获取 host 和协议
+    request_host = request.headers.get("host", "").split(":")[0]
+    request_scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+
+    # 使用参数或自动检测的值
+    actual_host = host or request_host or get_local_ip()
+    actual_https = https if https is not None else (request_scheme == "https")
+
+    # 如果是公网域名，使用 443/80 默认端口
+    use_default_port = actual_host and not actual_host.replace(".", "").isdigit()
+
+    config = generate_connect_config(name=name, host=actual_host, use_https=actual_https)
+
+    # 如果使用默认端口，不显示端口号
+    if use_default_port:
+        config["port"] = 443 if actual_https else 80
+
     config_json = json.dumps(config, indent=2, ensure_ascii=False)
 
-    # 构建 QR Code 图片 URL
-    qr_url = f"/api/connect/qrcode?size=300"
+    # 构建 QR Code 图片 URL (保持与 config 一致的参数)
+    qr_url = f"/api/connect/qrcode?size=300&host={actual_host}"
     if name:
         qr_url += f"&name={name}"
-    if host:
-        qr_url += f"&host={host}"
-    if https:
+    if actual_https:
         qr_url += "&https=true"
 
     html = f"""
