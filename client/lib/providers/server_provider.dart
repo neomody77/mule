@@ -13,12 +13,14 @@ import '../models/workspace.dart';
 class ServerState {
   final List<ServerConfig> servers;
   final Map<String, List<WorkspaceInfo>> workspaces; // serverId -> workspaces
+  final Map<String, List<WorkspaceInfo>> deletedWorkspaces; // serverId -> deleted workspaces
   final Map<String, bool> serverStatus; // serverId -> isOnline
   final bool isLoading;
 
   const ServerState({
     this.servers = const [],
     this.workspaces = const {},
+    this.deletedWorkspaces = const {},
     this.serverStatus = const {},
     this.isLoading = false,
   });
@@ -26,12 +28,14 @@ class ServerState {
   ServerState copyWith({
     List<ServerConfig>? servers,
     Map<String, List<WorkspaceInfo>>? workspaces,
+    Map<String, List<WorkspaceInfo>>? deletedWorkspaces,
     Map<String, bool>? serverStatus,
     bool? isLoading,
   }) {
     return ServerState(
       servers: servers ?? this.servers,
       workspaces: workspaces ?? this.workspaces,
+      deletedWorkspaces: deletedWorkspaces ?? this.deletedWorkspaces,
       serverStatus: serverStatus ?? this.serverStatus,
       isLoading: isLoading ?? this.isLoading,
     );
@@ -39,6 +43,22 @@ class ServerState {
 
   List<WorkspaceInfo> getWorkspaces(String serverId) {
     return workspaces[serverId] ?? [];
+  }
+
+  List<WorkspaceInfo> getDeletedWorkspaces(String serverId) {
+    return deletedWorkspaces[serverId] ?? [];
+  }
+
+  /// 获取所有已删除的 workspaces（所有服务器）
+  List<({ServerConfig server, WorkspaceInfo workspace})> get allDeletedWorkspaces {
+    final result = <({ServerConfig server, WorkspaceInfo workspace})>[];
+    for (final server in servers) {
+      final deleted = deletedWorkspaces[server.id] ?? [];
+      for (final workspace in deleted) {
+        result.add((server: server, workspace: workspace));
+      }
+    }
+    return result;
   }
 
   bool isServerOnline(String serverId) {
@@ -274,6 +294,68 @@ class ServerNotifier extends StateNotifier<ServerState> {
       }
       return false;
     } catch (e) {
+      return false;
+    }
+  }
+
+  /// 获取已删除的工作区列表
+  Future<List<WorkspaceInfo>> fetchDeletedWorkspaces(String serverId) async {
+    final server = state.getServer(serverId);
+    if (server == null) return [];
+
+    try {
+      final url = '${server.httpBaseUrl}/api/workspaces/trash/list';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${server.token}'},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        final deleted = data.map((e) => WorkspaceInfo.fromJson(e)).toList();
+
+        // 更新状态
+        final newDeletedWorkspaces =
+            Map<String, List<WorkspaceInfo>>.from(state.deletedWorkspaces)
+              ..[serverId] = deleted;
+        state = state.copyWith(deletedWorkspaces: newDeletedWorkspaces);
+
+        return deleted;
+      }
+      return [];
+    } catch (e) {
+      debugPrint('[ServerNotifier] fetchDeletedWorkspaces error: $e');
+      return [];
+    }
+  }
+
+  /// 刷新所有服务器的已删除工作区
+  Future<void> refreshAllDeletedWorkspaces() async {
+    await Future.wait(
+      state.servers.map((server) => fetchDeletedWorkspaces(server.id)),
+    );
+  }
+
+  /// 恢复工作区
+  Future<bool> restoreWorkspace(String serverId, String workspaceId) async {
+    final server = state.getServer(serverId);
+    if (server == null) return false;
+
+    try {
+      final url = '${server.httpBaseUrl}/api/workspaces/$workspaceId/restore';
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer ${server.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        await refreshServer(serverId);
+        await fetchDeletedWorkspaces(serverId);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[ServerNotifier] restoreWorkspace error: $e');
       return false;
     }
   }

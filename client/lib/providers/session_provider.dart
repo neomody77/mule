@@ -51,8 +51,14 @@ class SessionState {
 
   List<ChatSession> getSessionsForWorkspace(String serverId, String workspaceId) {
     return sessions
-        .where((s) => s.serverId == serverId && s.workspaceId == workspaceId)
+        .where((s) => s.serverId == serverId && s.workspaceId == workspaceId && !s.deleted)
         .toList();
+  }
+
+  /// 获取已删除的 sessions（回收站）
+  List<ChatSession> get deletedSessions {
+    return sessions.where((s) => s.deleted).toList()
+      ..sort((a, b) => (b.deletedAt ?? b.lastActiveAt).compareTo(a.deletedAt ?? a.lastActiveAt));
   }
 }
 
@@ -203,8 +209,43 @@ class SessionNotifier extends StateNotifier<SessionState> {
     return session;
   }
 
-  /// 删除 session
+  /// 软删除 session（移到回收站）
   Future<void> deleteSession(String sessionId) async {
+    await _connectionPool.unsubscribe(sessionId);
+
+    final index = state.sessions.indexWhere((s) => s.id == sessionId);
+    if (index >= 0) {
+      final newSessions = [...state.sessions];
+      final session = newSessions[index];
+      newSessions[index] = session.copyWith(
+        deleted: true,
+        deletedAt: DateTime.now(),
+      );
+      state = state.copyWith(
+        sessions: newSessions,
+        clearActiveSession: state.activeSessionId == sessionId,
+      );
+      await _save();
+    }
+  }
+
+  /// 恢复 session（从回收站恢复）
+  Future<void> restoreSession(String sessionId) async {
+    final index = state.sessions.indexWhere((s) => s.id == sessionId);
+    if (index >= 0) {
+      final newSessions = [...state.sessions];
+      final session = newSessions[index];
+      newSessions[index] = session.copyWith(
+        deleted: false,
+        clearDeletedAt: true,
+      );
+      state = state.copyWith(sessions: newSessions);
+      await _save();
+    }
+  }
+
+  /// 永久删除 session
+  Future<void> permanentlyDeleteSession(String sessionId) async {
     await _connectionPool.unsubscribe(sessionId);
 
     final newSessions = state.sessions.where((s) => s.id != sessionId).toList();
@@ -213,6 +254,18 @@ class SessionNotifier extends StateNotifier<SessionState> {
       clearActiveSession: state.activeSessionId == sessionId,
     );
 
+    await _save();
+  }
+
+  /// 清空回收站
+  Future<void> emptyTrash() async {
+    final deletedIds = state.sessions.where((s) => s.deleted).map((s) => s.id).toList();
+    for (final id in deletedIds) {
+      await _connectionPool.unsubscribe(id);
+    }
+
+    final newSessions = state.sessions.where((s) => !s.deleted).toList();
+    state = state.copyWith(sessions: newSessions);
     await _save();
   }
 
