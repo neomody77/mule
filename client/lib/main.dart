@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'config/theme.dart';
 import 'models/server_config.dart';
@@ -20,8 +21,11 @@ ServerConfig? getPendingAutoConnectServer() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 使用 path URL 策略（去掉 #）
+  usePathUrlStrategy();
+
   // ignore: avoid_print
-  print('====== Mule App Starting - Build v20260103_router ======');
+  print('====== Mule App Starting - Build v20260103_router_v2 ======');
 
   // 初始化远程命令服务
   RemoteCommandService.instance.init();
