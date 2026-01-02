@@ -3,8 +3,10 @@
 
 管理工作区的创建、删除、文件操作等
 """
+import asyncio
 import json
-import shutil
+import logging
+import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +14,8 @@ from typing import Optional
 
 from app.config import settings
 from app.models.workspace import WorkspaceInfo
+
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceManager:
@@ -145,6 +149,10 @@ class WorkspaceManager:
         workspace_path = self._get_workspace_path(workspace_id)
 
         if meta:
+            # 永久删除的工作区不返回
+            if meta.get("permanently_deleted"):
+                return None
+
             # 检查是否已删除
             is_deleted = meta.get("deleted", False)
             if is_deleted and not include_deleted:
@@ -328,17 +336,29 @@ class WorkspaceManager:
         return workspaces
 
     def delete_workspace(self, workspace_id: str, permanent: bool = False) -> bool:
-        """删除工作区（软删除，可恢复）"""
+        """删除工作区（软删除，可恢复）
+
+        软删除：标记 deleted=True，停止容器（不删除）
+        硬删除：删除容器，但保留文件
+        """
         if not self.workspace_exists(workspace_id):
             return False
 
         if permanent:
-            # 永久删除
-            workspace_path = self._get_workspace_path(workspace_id)
-            shutil.rmtree(workspace_path)
+            # 永久删除 - 只删除容器，保留文件
+            self._cleanup_containers(workspace_id, remove=True)
+
+            # 从 metadata 中完全移除（但不删除文件）
+            meta = self._load_meta(workspace_id)
+            if meta:
+                meta["permanently_deleted"] = True
+                meta["permanently_deleted_at"] = datetime.now().isoformat()
+                self._save_meta(workspace_id, meta)
+
+            logger.info(f"Workspace {workspace_id} permanently deleted (files preserved)")
             return True
 
-        # 软删除 - 标记 metadata
+        # 软删除 - 标记 metadata，停止容器
         meta = self._load_meta(workspace_id)
         if not meta:
             # 如果没有 metadata，先自动识别创建
@@ -349,9 +369,70 @@ class WorkspaceManager:
             meta["deleted"] = True
             meta["deleted_at"] = datetime.now().isoformat()
             self._save_meta(workspace_id, meta)
+
+            # 停止容器（但不删除）
+            self._cleanup_containers(workspace_id, remove=False)
+
+            logger.info(f"Workspace {workspace_id} soft deleted, container stopped")
             return True
 
         return False
+
+    def _cleanup_containers(self, workspace_id: str, remove: bool = False) -> None:
+        """清理与 workspace 相关的容器
+
+        Args:
+            workspace_id: 工作区 ID
+            remove: 是否删除容器（True=删除，False=只停止）
+        """
+        try:
+            # 1. 清理 docker_executor 管理的容器 (mule-ws-{workspace_id})
+            ws_container = f"mule-ws-{workspace_id}"
+            self._docker_container_action(ws_container, remove=remove)
+
+            # 2. 清理 sandbox_agent 管理的容器 (mule-sandbox-{hash})
+            # sandbox 容器名基于 workspace_id 和 session_id 的 hash
+            # 我们需要查找所有以 mule-sandbox- 开头且挂载了这个 workspace 的容器
+            result = subprocess.run(
+                ["docker", "ps", "-a", "--format", "{{.Names}}"],
+                capture_output=True, text=True
+            )
+            for container_name in result.stdout.strip().split('\n'):
+                if container_name.startswith("mule-sandbox-"):
+                    # 检查容器是否挂载了这个 workspace
+                    inspect_result = subprocess.run(
+                        ["docker", "inspect", container_name, "--format", "{{range .Mounts}}{{.Source}}{{end}}"],
+                        capture_output=True, text=True
+                    )
+                    workspace_path = str(self._get_workspace_path(workspace_id))
+                    if workspace_path in inspect_result.stdout:
+                        self._docker_container_action(container_name, remove=remove)
+
+        except Exception as e:
+            logger.warning(f"Error cleaning up containers for workspace {workspace_id}: {e}")
+
+    def _docker_container_action(self, container_name: str, remove: bool = False) -> None:
+        """对 Docker 容器执行停止或删除操作"""
+        try:
+            # 先停止容器
+            subprocess.run(
+                ["docker", "stop", container_name],
+                capture_output=True, timeout=15
+            )
+            logger.info(f"Container {container_name} stopped")
+
+            if remove:
+                # 删除容器
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    capture_output=True, timeout=10
+                )
+                logger.info(f"Container {container_name} removed")
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout stopping/removing container {container_name}")
+        except Exception as e:
+            logger.debug(f"Container action failed for {container_name}: {e}")
 
     def restore_workspace(self, workspace_id: str) -> Optional[WorkspaceInfo]:
         """恢复已删除的工作区"""
@@ -375,15 +456,21 @@ class WorkspaceManager:
         return self.get_workspace(workspace_id)
 
     def list_deleted_workspaces(self) -> list[WorkspaceInfo]:
-        """列出所有已删除的工作区（回收站）"""
+        """列出所有已删除的工作区（回收站）
+
+        只返回软删除的工作区，不包括永久删除的
+        """
         settings.ensure_workspace_base_dir()
 
         workspaces = []
         for item in self.base_dir.iterdir():
             if item.is_dir() and not item.name.startswith("."):
-                workspace = self.get_workspace(item.name, include_deleted=True)
-                if workspace and workspace.deleted:
-                    workspaces.append(workspace)
+                meta = self._load_meta(item.name)
+                # 只显示软删除但未永久删除的工作区
+                if meta and meta.get("deleted") and not meta.get("permanently_deleted"):
+                    workspace = self.get_workspace(item.name, include_deleted=True)
+                    if workspace:
+                        workspaces.append(workspace)
 
         # 按删除时间排序
         workspaces.sort(key=lambda w: w.deleted_at or w.updated_at, reverse=True)
