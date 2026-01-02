@@ -1,5 +1,5 @@
 """
-Claude Code Remote - FastAPI 主入口
+Mule - FastAPI 主入口
 
 移动端远程编码平台服务端
 """
@@ -64,7 +64,7 @@ async def _execute_plan_prompt(workspace_id: str, session_id: str, content: str)
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
-    logger.info(f"Starting Claude Code Remote Server...")
+    logger.info(f"Starting Mule Server...")
     logger.info(f"Workspace base directory: {settings.workspace_base_dir.absolute()}")
     settings.ensure_workspace_base_dir()
 
@@ -120,8 +120,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Claude Code Remote",
-    description="移动端远程编码平台 - 通过 Claude Agent 实现远程代码操作",
+    title="Mule",
+    description="Mule - 移动端远程编码平台",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -146,7 +146,7 @@ app.include_router(webhook.router, tags=["webhook"])
 async def api_info():
     """API 信息"""
     return {
-        "name": "Claude Code Remote",
+        "name": "Mule",
         "version": "0.1.0",
         "status": "running",
         "workspace_dir": str(settings.workspace_base_dir.absolute()),

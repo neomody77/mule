@@ -1,6 +1,6 @@
-# claude_code_remote
+# Mule
 
-A new Flutter project.
+移动端远程编码平台 Flutter 客户端。
 
 ## Getting Started
 
