@@ -50289,9 +50289,9 @@ else{l=t.p
 l=A.fL(g,A.c5(A.b([new A.iT(1,B.cF,A.bO(A.b([A.as(s.e,g,B.au,g,g,g,g,g),h.ad8(s.x)],l),B.aj,B.n,B.q),g),B.d6,A.bW(B.Lf,B.W,g,16)],l),B.p,B.n,B.ae,0,g),B.V,!1,g,g,g,g,g,g,g,g,g,g,g,g,g,h.gasw(),g,g,g,g,g,g)}k=t.p
 j=A.b([],k)
 if(!e&&s.at.length!==0){i=s.at
-j.push(A.e2(g,g,g,new A.P3(A.as(""+new A.at(i,new A.aIQ(),A.T(i).h("at<1>")).gu(0),g,g,g,g,g,g,g),B.b.eL(i,new A.aIR()),B.M6,g),g,g,h.gat7(),g,g,g,"Tasks"))}j.push(A.e2(g,g,g,B.lT,g,g,h.gapg(),g,g,g,"Files"))
+j.push(A.e2(g,g,g,new A.P3(A.as(""+new A.at(i,new A.aIQ(),A.T(i).h("at<1>")).gu(0),g,g,g,g,g,g,g),B.b.eL(i,new A.aIR()),B.M6,g),g,g,h.gat7(),g,g,g,"Tasks"))}j.push(A.e2(g,g,g,B.Mc,g,g,h.gaeP(),g,g,g,"Clear Messages"))
 j.push(A.e2(g,g,g,B.M4,g,g,h.gaey(),g,g,g,"Compact Context"))
-j.push(A.e2(g,g,g,B.Mc,g,g,h.gaeP(),g,g,g,"Clear Messages"))
+j.push(A.e2(g,g,g,B.lT,g,g,h.gapg(),g,g,g,"Files"))
 m=A.rs(j,g,g,g,new A.hn("session.back",g,new A.aIS(a),m,g),l)
 l=h.c
 l.toString
