@@ -97,10 +97,10 @@ async def lifespan(app: FastAPI):
     await plan_monitor_registry.start_all_monitors()
     logger.info(f"Started {len(settings.token_list)} plan monitors")
 
-    # 启动 credentials watcher（仅 Docker 隔离模式）
-    if settings.use_docker_isolation:
+    # 启动 credentials watcher（仅 sandbox 模式）
+    if settings.agent_backend == "sandbox":
         credentials_watcher.start()
-        logger.info("Started credentials watcher for Docker isolation")
+        logger.info("Started credentials watcher for sandbox mode")
 
     logger.info("Server started successfully")
 
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down server...")
 
     # 停止 credentials watcher
-    if settings.use_docker_isolation:
+    if settings.agent_backend == "sandbox":
         credentials_watcher.stop()
         logger.info("Stopped credentials watcher")
 
