@@ -35,7 +35,7 @@ async def verify_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if token != settings.api_token:
+    if not settings.is_valid_token(token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",
@@ -47,4 +47,4 @@ async def verify_token(
 
 async def verify_ws_token(token: str) -> bool:
     """验证 WebSocket 连接的 Token"""
-    return token == settings.api_token
+    return settings.is_valid_token(token)

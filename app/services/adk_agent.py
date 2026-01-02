@@ -24,6 +24,7 @@ from typing import AsyncGenerator, Optional, Union
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.genai import types
 
 from app.config import settings
 from app.services.agent_logger import AgentLogger, agent_logger_manager
@@ -116,6 +117,10 @@ class ADKAgent:
         # 创建模型（支持 Gemini 或 LiteLLM）
         model = _create_model()
 
+        # 使用 "agents" 作为 app_name（ADK 从包路径推断出 "agents"）
+        self.app_name = "agents"
+        self.user_id = f"user_{self.workspace_id or 'default'}"
+
         # 创建 Agent（使用 LlmAgent 支持更多配置）
         self.agent = LlmAgent(
             name="coding_agent",
@@ -131,7 +136,7 @@ class ADKAgent:
         # 创建 Runner
         self.runner = Runner(
             agent=self.agent,
-            app_name=f"mule_{self.workspace_id}",
+            app_name=self.app_name,
             session_service=self.session_service,
         )
 
@@ -221,19 +226,43 @@ class ADKAgent:
     async def _run_agent(self, prompt: str) -> str:
         """运行 ADK Agent 并获取响应"""
         try:
-            # 使用 Runner 执行
-            result = await asyncio.to_thread(
-                self.runner.run,
-                prompt
+            # 创建用户消息内容
+            user_content = types.Content(
+                role="user",
+                parts=[types.Part(text=prompt)]
             )
 
-            # 提取最终响应文本
-            if hasattr(result, 'text'):
-                return result.text
-            elif isinstance(result, str):
-                return result
+            # 确保 session 存在（ADK InMemorySessionService 方法是 async 的）
+            existing = await self.session_service.get_session(
+                app_name=self.app_name,
+                user_id=self.user_id,
+                session_id=self.session_id
+            )
+            if existing is None:
+                # Session 不存在，创建新的
+                session = await self.session_service.create_session(
+                    app_name=self.app_name,
+                    user_id=self.user_id,
+                    session_id=self.session_id
+                )
+                logger.info(f"Created ADK session: {session.id} for app={self.app_name} user={self.user_id}")
             else:
-                return str(result)
+                logger.info(f"Using existing ADK session: {existing.id}")
+
+            # 使用 Runner.run_async（异步版本）
+            response_parts = []
+            async for event in self.runner.run_async(
+                user_id=self.user_id,
+                session_id=self.session_id,
+                new_message=user_content
+            ):
+                # 从事件中提取文本响应
+                if hasattr(event, 'content') and event.content:
+                    for part in event.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            response_parts.append(part.text)
+
+            return "".join(response_parts) if response_parts else ""
 
         except Exception as e:
             logger.error(f"ADK runner error: {e}", exc_info=True)

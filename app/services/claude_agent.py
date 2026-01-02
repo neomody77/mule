@@ -1,24 +1,29 @@
 """
 Claude Agent 服务 - 核心代码执行引擎
 
-使用 Claude Agent SDK，提供:
+使用 Claude Agent SDK 的 ClaudeSDKClient，提供:
+- 持续会话支持（多轮对话保持上下文）
 - 流式响应处理
+- 中断支持
 - 内置工具 (Read, Write, Edit, Bash, Glob, Grep)
-- 会话上下文管理
 - 操作日志记录
 """
+import asyncio
 import logging
 import shutil
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
 from claude_agent_sdk import (
-    query,
+    ClaudeSDKClient,
     ClaudeAgentOptions,
     AssistantMessage,
     ResultMessage,
     SystemMessage,
     UserMessage,
+    TextBlock,
+    ToolUseBlock,
+    ToolResultBlock,
 )
 
 from app.services.agent_logger import AgentLogger, agent_logger_manager
@@ -41,7 +46,13 @@ SYSTEM_CLAUDE_CLI = find_system_claude_cli()
 
 
 class ClaudeCodeAgent:
-    """Claude Code Agent - 使用 Claude Agent SDK 的远程代码执行代理"""
+    """Claude Code Agent - 使用 ClaudeSDKClient 的远程代码执行代理
+
+    特性：
+    - 持续会话：多轮对话共享上下文
+    - 中断支持：可以中断正在执行的任务
+    - 流式响应：实时返回处理结果
+    """
 
     def __init__(self, workspace_path: str, workspace_id: str = "", agent_session_id: str = ""):
         self.workspace_path = Path(workspace_path).resolve()
@@ -63,16 +74,17 @@ class ClaudeCodeAgent:
         if workspace_id and agent_session_id:
             self.activity_logger = agent_logger_manager.get_logger(workspace_id, agent_session_id)
 
+        # ClaudeSDKClient 实例 - 保持会话连续性
+        self._client: Optional[ClaudeSDKClient] = None
+        self._is_connected = False
+        self._is_processing = False
+
     def _stderr_callback(self, message: str) -> None:
         """处理 stderr 输出"""
         logger.warning(f"Claude CLI stderr: {message}")
 
-    def _get_options(self, resume_session: bool = False) -> ClaudeAgentOptions:
-        """获取 Agent SDK 配置
-
-        Args:
-            resume_session: 是否续接之前的会话
-        """
+    def _get_options(self) -> ClaudeAgentOptions:
+        """获取 Agent SDK 配置"""
         options = ClaudeAgentOptions(
             # 允许的工具 - 使用 SDK 内置工具
             allowed_tools=[
@@ -92,7 +104,7 @@ class ClaudeCodeAgent:
             # 使用系统 Claude CLI（已登录）
             cli_path=SYSTEM_CLAUDE_CLI,
             # 续接之前的会话
-            resume=self.session_id if resume_session and self.session_id else None,
+            resume=self.session_id if self.session_id else None,
             # 系统提示 - 使用增强版 prompt
             system_prompt=get_system_prompt(str(self.workspace_path)),
         )
@@ -104,20 +116,30 @@ class ClaudeCodeAgent:
 
         return options
 
+    async def _ensure_connected(self) -> None:
+        """确保客户端已连接"""
+        if self._client is None or not self._is_connected:
+            options = self._get_options()
+            self._client = ClaudeSDKClient(options=options)
+            await self._client.connect()
+            self._is_connected = True
+            logger.info(f"ClaudeSDKClient connected for workspace {self.workspace_id}")
+
     async def execute(self, prompt: str) -> AsyncGenerator[dict, None]:
         """
         执行用户提示，返回流式响应
 
+        使用 ClaudeSDKClient 保持会话连续性，支持多轮对话。
+
         Yields:
             dict: 事件字典，格式为 {"event": str, "data": dict}
         """
-        try:
-            # 判断是否需要续接会话
-            resume_session = self.session_id is not None
-            options = self._get_options(resume_session=resume_session)
+        self._is_processing = True
 
-            if resume_session:
-                logger.info(f"Resuming session: {self.session_id}")
+        try:
+            # 确保客户端已连接
+            await self._ensure_connected()
+
             logger.info(f"Executing prompt: {prompt[:100]}...")
 
             # 记录任务开始
@@ -130,14 +152,18 @@ class ClaudeCodeAgent:
                 "data": {"type": "task_start", "message": "Starting task..."}
             }
 
-            async for message in query(prompt=prompt, options=options):
+            # 发送查询
+            await self._client.query(prompt)
+
+            # 处理响应流
+            async for message in self._client.receive_response():
                 logger.debug(f"Received message type: {type(message).__name__}")
 
                 # 处理系统消息
                 if isinstance(message, SystemMessage):
                     logger.info(f"System message: {message.subtype}")
-                    if hasattr(message, 'session_id'):
-                        self.session_id = message.session_id
+                    if hasattr(message, 'data') and 'session_id' in message.data:
+                        self.session_id = message.data['session_id']
                         logger.info(f"Session started: {self.session_id}")
                     # 发送 thinking 状态
                     if message.subtype == 'init':
@@ -152,10 +178,10 @@ class ClaudeCodeAgent:
                     if hasattr(message, 'content') and isinstance(message.content, list):
                         for block in message.content:
                             # ToolResultBlock - 工具执行结果
-                            if hasattr(block, 'tool_use_id'):
+                            if isinstance(block, ToolResultBlock):
                                 tool_id = block.tool_use_id
-                                is_error = getattr(block, 'is_error', False) or False
-                                content = getattr(block, 'content', '')
+                                is_error = block.is_error or False
+                                content = block.content or ''
 
                                 # 截断过长的内容用于显示
                                 display_content = content
@@ -181,17 +207,17 @@ class ClaudeCodeAgent:
                         block_type = type(block).__name__
                         logger.debug(f"Block type: {block_type}")
 
-                        if hasattr(block, 'text'):
+                        if isinstance(block, TextBlock):
                             text_content = block.text
                             logger.info(f"Text content: {text_content[:200] if len(text_content) > 200 else text_content}")
                             yield {
                                 "event": "text_delta",
                                 "data": {"text": text_content}
                             }
-                        elif hasattr(block, 'name'):  # ToolUseBlock
+                        elif isinstance(block, ToolUseBlock):
                             tool_name = block.name
-                            tool_input = getattr(block, 'input', {})
-                            tool_id = getattr(block, 'id', '')
+                            tool_input = block.input
+                            tool_id = block.id
 
                             # 生成用户友好的工具描述
                             tool_desc = self._get_tool_description(tool_name, tool_input)
@@ -209,13 +235,13 @@ class ClaudeCodeAgent:
                                     "description": tool_desc,
                                 }
                             }
-                        elif hasattr(block, 'tool_use_id'):  # ToolResultBlock
+                        elif isinstance(block, ToolResultBlock):
                             yield {
                                 "event": "tool_result",
                                 "data": {
                                     "id": block.tool_use_id,
-                                    "content": getattr(block, 'content', ''),
-                                    "is_error": getattr(block, 'is_error', False),
+                                    "content": block.content or '',
+                                    "is_error": block.is_error or False,
                                 }
                             }
 
@@ -227,17 +253,18 @@ class ClaudeCodeAgent:
                     if self.activity_logger:
                         self.activity_logger.log_task_end(
                             success=not message.is_error,
-                            error=getattr(message, 'result', '') if message.is_error else None
+                            error=message.result if message.is_error else None
                         )
 
                     yield {
                         "event": "message_end",
                         "data": {
                             "session_id": message.session_id,
-                            "duration_ms": getattr(message, 'duration_ms', 0),
+                            "duration_ms": message.duration_ms,
                             "num_turns": message.num_turns,
                             "is_error": message.is_error,
-                            "result": getattr(message, 'result', ''),
+                            "result": message.result or '',
+                            "total_cost_usd": message.total_cost_usd,
                         }
                     }
                     self.session_id = message.session_id
@@ -258,6 +285,9 @@ class ClaudeCodeAgent:
                 self.activity_logger.log_task_end(success=False, error=str(e))
 
             yield {"event": "error", "data": {"message": str(e)}}
+
+        finally:
+            self._is_processing = False
 
     def _log_tool_use(self, tool_name: str, tool_input: dict) -> None:
         """记录工具使用到活动日志"""
@@ -304,38 +334,63 @@ class ClaudeCodeAgent:
 
     def _get_tool_description(self, tool_name: str, tool_input: dict) -> str:
         """生成用户友好的工具描述"""
-        if tool_name == "Read":
-            file_path = tool_input.get("file_path", "")
-            # 只显示文件名
-            filename = file_path.split("/")[-1] if file_path else "file"
-            return f"Reading {filename}..."
-        elif tool_name == "Write":
-            file_path = tool_input.get("file_path", "")
-            filename = file_path.split("/")[-1] if file_path else "file"
-            return f"Writing {filename}..."
-        elif tool_name == "Edit":
-            file_path = tool_input.get("file_path", "")
-            filename = file_path.split("/")[-1] if file_path else "file"
-            return f"Editing {filename}..."
-        elif tool_name == "Bash":
-            command = tool_input.get("command", "")
-            # 截断过长的命令
-            if len(command) > 50:
-                command = command[:47] + "..."
-            return f"Running: {command}"
-        elif tool_name == "Glob":
-            pattern = tool_input.get("pattern", "")
-            return f"Searching: {pattern}"
-        elif tool_name == "Grep":
-            pattern = tool_input.get("pattern", "")
-            return f"Grep: {pattern}"
-        else:
-            return f"Using {tool_name}..."
+        def _truncate(s: str, max_len: int = 50) -> str:
+            return s[:max_len - 3] + "..." if len(s) > max_len else s
+
+        def _get_filename(path: str) -> str:
+            return path.split("/")[-1] if path else "file"
+
+        # 工具描述生成器映射
+        generators = {
+            "Read": lambda: f"Reading {_get_filename(tool_input.get('file_path', ''))}...",
+            "Write": lambda: f"Writing {_get_filename(tool_input.get('file_path', ''))}...",
+            "Edit": lambda: f"Editing {_get_filename(tool_input.get('file_path', ''))}...",
+            "Bash": lambda: f"Running: {_truncate(tool_input.get('command', ''))}",
+            "Glob": lambda: f"Searching: {tool_input.get('pattern', '')}",
+            "Grep": lambda: f"Grep: {tool_input.get('pattern', '')}",
+            "WebSearch": lambda: f"Searching: {tool_input.get('query', '')}",
+            "WebFetch": lambda: f"Fetching: {_truncate(tool_input.get('url', ''))}",
+            "Task": lambda: f"Task: {tool_input.get('description', '')}",
+        }
+
+        generator = generators.get(tool_name)
+        return generator() if generator else f"Using {tool_name}..."
 
     async def cancel(self) -> None:
-        """取消当前执行 - 对于 query() 不支持中断"""
-        logger.info("Cancel requested (not supported for query mode)")
+        """取消当前执行 - 使用 ClaudeSDKClient 的 interrupt 功能"""
+        if self._client and self._is_processing:
+            logger.info("Interrupting current task...")
+            try:
+                await self._client.interrupt()
+                logger.info("Task interrupted successfully")
+            except Exception as e:
+                logger.error(f"Failed to interrupt task: {e}")
+
+    async def disconnect(self) -> None:
+        """断开连接"""
+        if self._client and self._is_connected:
+            try:
+                await self._client.disconnect()
+                logger.info("ClaudeSDKClient disconnected")
+            except Exception as e:
+                logger.error(f"Failed to disconnect: {e}")
+            finally:
+                self._is_connected = False
+                self._client = None
 
     def reset_session(self) -> None:
-        """重置会话"""
+        """重置会话 - 下次执行将创建新会话"""
         self.session_id = None
+        # 断开当前连接，下次 execute 时会重新连接
+        if self._client:
+            asyncio.create_task(self.disconnect())
+
+    @property
+    def is_connected(self) -> bool:
+        """是否已连接"""
+        return self._is_connected
+
+    @property
+    def is_processing(self) -> bool:
+        """是否正在处理"""
+        return self._is_processing

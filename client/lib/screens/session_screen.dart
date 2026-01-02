@@ -62,8 +62,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     // 连接 WebSocket 并滚动到底部
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _connect();
-      // 进入时滚动到底部
-      _scrollToBottomIfNeeded();
+      // 进入时强制滚动到底部（延迟一下等消息加载）
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _forceScrollToBottom();
+      });
     });
   }
 
@@ -141,6 +143,13 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           );
         }
       });
+    }
+  }
+
+  /// 强制滚动到底部（进入页面时使用）
+  void _forceScrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     }
   }
 
@@ -240,10 +249,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                         },
                       ),
           ),
-
-          // 排队中的消息（暂存区）
-          if (session != null && session.pendingPrompts.isNotEmpty)
-            _buildPendingPrompts(session.pendingPrompts),
 
           // 输入栏
           _buildInputBar(session),
@@ -447,9 +452,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
               child: Focus(
                 onKeyEvent: (node, event) {
                   // Web 端: Enter 发送, Shift+Enter 换行
+                  // 检测 IME composing 状态，避免中文输入法回车触发发送
                   if (event is KeyDownEvent &&
                       event.logicalKey == LogicalKeyboardKey.enter &&
-                      !HardwareKeyboard.instance.isShiftPressed) {
+                      !HardwareKeyboard.instance.isShiftPressed &&
+                      !_inputController.value.composing.isValid) {
                     if (isConnected && _inputController.text.trim().isNotEmpty) {
                       _sendMessage();
                     }

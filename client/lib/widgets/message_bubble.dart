@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/message.dart';
 
@@ -47,6 +49,26 @@ class _MessageBubbleState extends State<MessageBubble> {
       );
     }
 
+    // 用户消息：pending 时使用浅色（同色系 shade200）
+    final isPending = message.isPending;
+    Color userBubbleColor;
+    Color userTextColor;
+    if (isUser) {
+      if (isPending) {
+        // 浅色：ZiaOlive.shade200
+        userBubbleColor = const Color(0xFF96A493);
+        userTextColor = Colors.white.withOpacity(0.9);
+      } else {
+        userBubbleColor = Theme.of(context).colorScheme.primary;
+        userTextColor = Theme.of(context).colorScheme.onPrimary;
+      }
+    } else {
+      userBubbleColor = isError
+          ? Theme.of(context).colorScheme.errorContainer
+          : Theme.of(context).colorScheme.surfaceContainerHighest;
+      userTextColor = Theme.of(context).colorScheme.onSurface;
+    }
+
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -56,17 +78,13 @@ class _MessageBubbleState extends State<MessageBubble> {
         margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isUser
-              ? Theme.of(context).colorScheme.primary
-              : isError
-                  ? Theme.of(context).colorScheme.errorContainer
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
+          color: userBubbleColor,
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (message.content.isNotEmpty) _buildContent(context, isUser),
+            if (message.content.isNotEmpty) _buildContent(context, isUser, userTextColor),
             if (message.toolCalls.isNotEmpty) ...[
               const SizedBox(height: 8),
               ...message.toolCalls.map((tc) => _buildToolCall(context, tc)),
@@ -114,23 +132,33 @@ class _MessageBubbleState extends State<MessageBubble> {
     );
   }
 
-  Widget _buildContent(BuildContext context, bool isUser) {
+  Widget _buildContent(BuildContext context, bool isUser, Color textColor) {
     if (isUser) {
       return Text(
         message.content,
         style: TextStyle(
-          color: Theme.of(context).colorScheme.onPrimary,
+          color: textColor,
         ),
       );
     }
 
     // Assistant 消息使用 Markdown 渲染
-    return MarkdownBody(
-      data: message.content,
-      selectable: true,
-      styleSheet: MarkdownStyleSheet(
+    // 使用 SelectionArea 包裹以支持文本选择，同时保持链接点击功能
+    return SelectionArea(
+      child: MarkdownBody(
+        data: message.content,
+        selectable: false,
+        onTapLink: (text, href, title) {
+          debugPrint('[MessageBubble] Link tapped: text=$text, href=$href');
+          _launchUrl(href);
+        },
+        styleSheet: MarkdownStyleSheet(
         p: TextStyle(
           color: Theme.of(context).colorScheme.onSurface,
+        ),
+        a: TextStyle(
+          color: Theme.of(context).colorScheme.primary,
+          decoration: TextDecoration.underline,
         ),
         code: TextStyle(
           backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
@@ -141,7 +169,29 @@ class _MessageBubbleState extends State<MessageBubble> {
           borderRadius: BorderRadius.circular(8),
         ),
       ),
+      ),
     );
+  }
+
+  Future<void> _launchUrl(String? url) async {
+    debugPrint('[MessageBubble] onTapLink called with url: $url');
+    if (url == null || url.isEmpty) {
+      debugPrint('[MessageBubble] URL is null or empty');
+      return;
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      debugPrint('[MessageBubble] Failed to parse URL: $url');
+      return;
+    }
+    final canLaunch = await canLaunchUrl(uri);
+    debugPrint('[MessageBubble] canLaunchUrl: $canLaunch');
+    if (canLaunch) {
+      final result = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      debugPrint('[MessageBubble] launchUrl result: $result');
+    } else {
+      debugPrint('[MessageBubble] Cannot launch URL: $url');
+    }
   }
 
   Widget _buildToolCall(BuildContext context, ToolCall toolCall) {
@@ -362,28 +412,20 @@ class _MessageBubbleState extends State<MessageBubble> {
     );
   }
 
+  // 工具图标映射
+  static const _toolIcons = {
+    'Read': Icons.file_open_outlined,
+    'Write': Icons.edit_document,
+    'Edit': Icons.edit_outlined,
+    'Bash': Icons.terminal,
+    'Glob': Icons.folder_outlined,
+    'Grep': Icons.search,
+    'Task': Icons.account_tree_outlined,
+    'WebSearch': Icons.language,
+    'WebFetch': Icons.download_outlined,
+  };
+
   IconData _getToolIcon(String toolName) {
-    switch (toolName) {
-      case 'Read':
-        return Icons.file_open_outlined;
-      case 'Write':
-        return Icons.edit_document;
-      case 'Edit':
-        return Icons.edit_outlined;
-      case 'Bash':
-        return Icons.terminal;
-      case 'Glob':
-        return Icons.folder_outlined;
-      case 'Grep':
-        return Icons.search;
-      case 'Task':
-        return Icons.account_tree_outlined;
-      case 'WebSearch':
-        return Icons.language;
-      case 'WebFetch':
-        return Icons.download_outlined;
-      default:
-        return Icons.build_outlined;
-    }
+    return _toolIcons[toolName] ?? Icons.build_outlined;
   }
 }

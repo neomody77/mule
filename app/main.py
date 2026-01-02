@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.api import workspaces, websocket, connect
+from app.api import workspaces, websocket, connect, cli_sessions
 from app.services.workspace_manager import workspace_manager
 
 # 配置日志
@@ -70,6 +70,7 @@ app.add_middleware(
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(websocket.router, tags=["websocket"])
 app.include_router(connect.router, prefix="/api/connect", tags=["connect"])
+app.include_router(cli_sessions.router, tags=["cli-sessions"])
 
 
 @app.get("/api")

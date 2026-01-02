@@ -5,6 +5,7 @@
 - 任务在后台执行，不受 WebSocket 连接影响
 - 缓存任务事件，支持客户端重连后获取历史
 - 任务状态持久化
+- 消息持久化到 JSONL 文件
 """
 import asyncio
 import logging
@@ -13,6 +14,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 from uuid import uuid4
+
+from app.services.message_store import message_store
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +130,11 @@ class TaskManager:
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now()
 
+        # 解析 workspace_id 和 session_id
+        parts = task.workspace_id.split(":", 1)
+        workspace_id = parts[0] if len(parts) > 0 else ""
+        session_id = parts[1] if len(parts) > 1 else ""
+
         try:
             async for event_dict in agent.execute(task.prompt):
                 # 保存事件
@@ -138,6 +146,9 @@ class TaskManager:
                     # 只收集前 500 字符用于标题生成
                     if len(task.assistant_text) < 500:
                         task.assistant_text += text
+
+                # 持久化消息到 JSONL
+                self._save_event_to_store(workspace_id, session_id, event_dict)
 
                 # 通知已注册的回调
                 await self._notify_event(task.workspace_id, event_dict)
@@ -234,6 +245,54 @@ class TaskManager:
                     callback(event)
             except Exception as e:
                 logger.error(f"Callback error: {e}")
+
+    def _save_event_to_store(self, workspace_id: str, session_id: str, event_dict: dict):
+        """保存事件到持久化存储"""
+        if not workspace_id or not session_id:
+            return
+
+        event_type = event_dict.get("event", "")
+        data = event_dict.get("data", {})
+
+        # 事件存储处理器映射
+        handlers = {
+            "text_delta": lambda: self._store_text_delta(workspace_id, session_id, data),
+            "tool_use_start": lambda: self._store_tool_use(workspace_id, session_id, data),
+            "tool_result": lambda: self._store_tool_result(workspace_id, session_id, data),
+        }
+
+        handler = handlers.get(event_type)
+        if handler:
+            try:
+                handler()
+            except Exception as e:
+                logger.error(f"Failed to save event to store: {e}")
+
+    def _store_text_delta(self, workspace_id: str, session_id: str, data: dict):
+        """存储助手消息"""
+        text = data.get("text", "")
+        if text:
+            message_store.append_assistant_message(workspace_id, session_id, text)
+
+    def _store_tool_use(self, workspace_id: str, session_id: str, data: dict):
+        """存储工具调用"""
+        message_store.append_tool_use(
+            workspace_id,
+            session_id,
+            tool_id=data.get("id", ""),
+            tool_name=data.get("name", ""),
+            description=data.get("description"),
+        )
+
+    def _store_tool_result(self, workspace_id: str, session_id: str, data: dict):
+        """存储工具结果"""
+        message_store.append_tool_result(
+            workspace_id,
+            session_id,
+            tool_id=data.get("id", ""),
+            content=data.get("content", ""),
+            is_error=data.get("is_error", False),
+        )
 
     def get_task_events(self, task_id: str, from_index: int = 0) -> list[dict]:
         """获取任务事件（支持增量获取）"""

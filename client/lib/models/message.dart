@@ -56,6 +56,7 @@ class ChatMessage {
   final DateTime timestamp;
   final List<ToolCall> toolCalls;
   final bool isStreaming;
+  final bool isPending; // 已发送但尚未被处理
 
   ChatMessage({
     String? id,
@@ -64,6 +65,7 @@ class ChatMessage {
     DateTime? timestamp,
     this.toolCalls = const [],
     this.isStreaming = false,
+    this.isPending = false,
   })  : id = id ?? const Uuid().v4(),
         timestamp = timestamp ?? DateTime.now();
 
@@ -74,6 +76,7 @@ class ChatMessage {
     DateTime? timestamp,
     List<ToolCall>? toolCalls,
     bool? isStreaming,
+    bool? isPending,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -82,6 +85,7 @@ class ChatMessage {
       timestamp: timestamp ?? this.timestamp,
       toolCalls: toolCalls ?? this.toolCalls,
       isStreaming: isStreaming ?? this.isStreaming,
+      isPending: isPending ?? this.isPending,
     );
   }
 

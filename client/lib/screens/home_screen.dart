@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/theme.dart';
+import '../main.dart' show getPendingAutoConnectServer;
 import '../models/chat_session.dart';
 import '../models/server_config.dart';
 import '../models/workspace.dart';
@@ -23,6 +24,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // 检查是否有自动连接的服务器
+      await _handleAutoConnect();
+
       // 刷新服务器列表
       await ref.read(serverProvider.notifier).refreshAllServers();
 
@@ -32,6 +36,96 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ref.read(sessionProvider.notifier).connectAllServers(servers);
       }
     });
+  }
+
+  /// 处理自动连接
+  Future<void> _handleAutoConnect() async {
+    final autoConnectServer = getPendingAutoConnectServer();
+    if (autoConnectServer == null) return;
+
+    // 检查是否已存在相同配置的服务器
+    final existingServers = ref.read(serverProvider).servers;
+    final existingServer = existingServers.where(
+      (s) => s.host == autoConnectServer.host &&
+             s.port == autoConnectServer.port &&
+             s.token == autoConnectServer.token,
+    ).firstOrNull;
+
+    ServerConfig serverToUse;
+
+    if (existingServer != null) {
+      // 使用已存在的服务器
+      serverToUse = existingServer;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Using existing server: ${existingServer.name}')),
+        );
+      }
+    } else {
+      // 添加新服务器
+      serverToUse = await ref.read(serverProvider.notifier).addServer(
+        name: autoConnectServer.name,
+        host: autoConnectServer.host,
+        port: autoConnectServer.port,
+        token: autoConnectServer.token,
+        useHttps: autoConnectServer.useHttps,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added server: ${serverToUse.name}')),
+        );
+      }
+    }
+
+    // 等待服务器刷新完成
+    await ref.read(serverProvider.notifier).refreshServer(serverToUse.id);
+
+    // 获取 default workspace 并创建新 session
+    final workspaces = ref.read(serverProvider).getWorkspaces(serverToUse.id);
+    if (workspaces.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No workspaces found on server')),
+        );
+      }
+      return;
+    }
+
+    // 优先选择 default workspace
+    final defaultWorkspace = workspaces.firstWhere(
+      (w) => w.id == 'default',
+      orElse: () => workspaces.first,
+    );
+
+    // 创建新 session
+    final session = await ref.read(sessionProvider.notifier).createSession(
+      serverId: serverToUse.id,
+      workspaceId: defaultWorkspace.id,
+      workspaceName: defaultWorkspace.name,
+      name: 'New Session',
+    );
+
+    // 连接服务器
+    ref.read(sessionProvider.notifier).connectAllServers([serverToUse]);
+
+    // 设置为活跃 session 并导航
+    ref.read(sessionProvider.notifier).setActiveSession(session.id);
+
+    if (mounted) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SessionScreen(
+            session: session,
+            server: serverToUse,
+          ),
+        ),
+      );
+
+      if (mounted) {
+        ref.read(sessionProvider.notifier).setActiveSession(null);
+      }
+    }
   }
 
   void _showNewSessionDialog({String? serverId, String? workspaceId, String? workspaceName}) {

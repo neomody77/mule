@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
 from app.config import settings
+from app.utils.crypto import encrypt_connect_info, decrypt_connect_info, generate_connect_url
 
 router = APIRouter()
 
@@ -31,13 +32,16 @@ def generate_connect_config(
     name: Optional[str] = None,
     host: Optional[str] = None,
     use_https: bool = False,
+    token_index: int = 0,
 ) -> dict:
     """生成连接配置 JSON"""
+    tokens = settings.token_list
+    token = tokens[token_index] if token_index < len(tokens) else tokens[0]
     return {
         "name": name or f"Mule Server",
         "host": host or get_local_ip(),
         "port": settings.port,
-        "token": settings.api_token,
+        "token": token,
         "https": use_https,
     }
 
@@ -286,3 +290,114 @@ async def get_connect_qrcode_page(
 </html>
 """
     return Response(content=html, media_type="text/html")
+
+
+@router.get("/url")
+async def get_encrypted_url(
+    name: Optional[str] = Query(None, description="服务器名称"),
+    host: Optional[str] = Query(None, description="自定义 host（默认自动检测局域网 IP）"),
+    https: bool = Query(False, description="是否使用 HTTPS"),
+    token_index: int = Query(0, description="使用第几个 token（0-based）"),
+    ttl: int = Query(86400, description="URL 有效期（秒），默认 24 小时"),
+):
+    """
+    生成加密的连接 URL
+
+    用户可以直接打开这个 URL 自动连接到服务器
+    """
+    tokens = settings.token_list
+    token = tokens[token_index] if token_index < len(tokens) else tokens[0]
+    actual_host = host or get_local_ip()
+
+    url = generate_connect_url(
+        host=actual_host,
+        port=settings.port,
+        token=token,
+        name=name or "Mule Server",
+        https=https,
+        ttl=ttl,
+    )
+
+    return {
+        "url": url,
+        "expires_in": ttl,
+    }
+
+
+@router.get("/decrypt")
+async def decrypt_url_param(
+    c: str = Query(..., description="加密的连接参数"),
+):
+    """
+    解密连接参数
+
+    前端可以调用这个 API 来解密 URL 中的 c 参数
+    """
+    result = decrypt_connect_info(c)
+    if result is None:
+        return {"error": "Invalid or expired connection info"}
+
+    return result
+
+
+@router.get("/qrcode/url")
+async def get_url_qrcode(
+    name: Optional[str] = Query(None, description="服务器名称"),
+    host: Optional[str] = Query(None, description="自定义 host"),
+    https: bool = Query(False, description="是否使用 HTTPS"),
+    token_index: int = Query(0, description="使用第几个 token"),
+    ttl: int = Query(86400, description="URL 有效期（秒）"),
+    size: int = Query(300, description="QR Code 尺寸", ge=100, le=1000),
+):
+    """
+    生成加密 URL 的 QR Code
+
+    扫描后可以直接在浏览器中打开并自动连接
+    """
+    try:
+        import qrcode
+    except ImportError:
+        return Response(
+            content="qrcode package not installed",
+            status_code=500,
+            media_type="text/plain",
+        )
+
+    tokens = settings.token_list
+    token = tokens[token_index] if token_index < len(tokens) else tokens[0]
+    actual_host = host or get_local_ip()
+
+    url = generate_connect_url(
+        host=actual_host,
+        port=settings.port,
+        token=token,
+        name=name or "Mule Server",
+        https=https,
+        ttl=ttl,
+    )
+
+    # 生成 QR Code
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=2,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+    img = img.resize((size, size))
+
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-cache",
+            "Content-Disposition": "inline; filename=mule-connect-url.png",
+        },
+    )

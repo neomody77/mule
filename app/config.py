@@ -26,8 +26,20 @@ class Settings(BaseSettings):
     # 工作目录配置 - 所有工作区都在此目录下创建
     workspace_base_dir: Path = Path("./workspaces")
 
-    # 认证配置
-    api_token: str = "change-me-in-production"  # 简单 Token 认证
+    # 认证配置 - 支持多个 token，逗号分隔
+    api_tokens: str = "change-me-in-production"  # 多个 token 用逗号分隔
+
+    # 加密密钥 - 用于加密连接信息
+    connect_secret: str = "mule-secret-key-change-me"
+
+    @property
+    def token_list(self) -> list[str]:
+        """获取 token 列表"""
+        return [t.strip() for t in self.api_tokens.split(",") if t.strip()]
+
+    def is_valid_token(self, token: str) -> bool:
+        """验证 token 是否有效"""
+        return token in self.token_list
 
     # Claude Agent SDK 使用系统登录的凭证，无需配置 API key
 

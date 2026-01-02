@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.auth import verify_token
 from app.models.workspace import WorkspaceCreate, WorkspaceInfo
 from app.services.workspace_manager import workspace_manager
+from app.services.message_store import message_store
 
 router = APIRouter()
 
@@ -96,3 +97,26 @@ async def read_file(
         raise HTTPException(status_code=404, detail="File not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{workspace_id}/sessions/{session_id}/messages")
+async def get_session_messages(
+    workspace_id: str,
+    session_id: str,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    token: str = Depends(verify_token)
+):
+    """获取 session 消息历史"""
+    messages = message_store.get_messages(workspace_id, session_id, limit=limit, offset=offset)
+    return {"messages": messages}
+
+
+@router.delete("/{workspace_id}/sessions/{session_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_session_messages(
+    workspace_id: str,
+    session_id: str,
+    token: str = Depends(verify_token)
+):
+    """清空 session 消息历史"""
+    message_store.clear_messages(workspace_id, session_id)

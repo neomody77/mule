@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -177,12 +178,103 @@ class SessionNotifier extends StateNotifier<SessionState> {
       connectionState: SessionConnectionState.connecting,
     ));
 
+    // 加载服务端消息历史（如果本地没有消息）
+    if (session.messages.isEmpty) {
+      await _loadMessageHistory(sessionId, session.workspaceId, serverConfig);
+    }
+
     // 每次进入都发送订阅（服务器会返回 subscribed，触发状态变为 connected）
     await _connectionPool.subscribe(
       sessionId: sessionId,
       workspaceId: session.workspaceId,
       serverConfig: serverConfig,
     );
+  }
+
+  /// 从服务端加载消息历史
+  Future<void> _loadMessageHistory(
+    String sessionId,
+    String workspaceId,
+    ServerConfig serverConfig,
+  ) async {
+    try {
+      final messagesData = await _fetchMessages(workspaceId, sessionId, serverConfig);
+      if (messagesData.isEmpty) return;
+
+      final messages = _parseMessages(messagesData);
+      _addMessagesToSession(sessionId, messages);
+
+      debugPrint('[SessionNotifier] Loaded ${messages.length} messages from server');
+    } catch (e) {
+      debugPrint('[SessionNotifier] Failed to load message history: $e');
+    }
+  }
+
+  Future<List<dynamic>> _fetchMessages(
+    String workspaceId,
+    String sessionId,
+    ServerConfig serverConfig,
+  ) async {
+    final dio = Dio();
+    dio.options.headers['Authorization'] = 'Bearer ${serverConfig.token}';
+    dio.options.headers['X-API-Token'] = serverConfig.token;
+
+    final response = await dio.get(
+      '${serverConfig.httpBaseUrl}/api/workspaces/$workspaceId/sessions/$sessionId/messages',
+    );
+    return response.data['messages'] ?? [];
+  }
+
+  List<ChatMessage> _parseMessages(List<dynamic> messagesData) {
+    final messages = <ChatMessage>[];
+
+    // 消息解析器映射
+    final parsers = <String, void Function(String, Map<String, dynamic>?, List<ChatMessage>)>{
+      'user': (content, _, msgs) => msgs.add(ChatMessage(type: MessageType.user, content: content)),
+      'assistant': (content, _, msgs) => msgs.add(ChatMessage(type: MessageType.assistant, content: content)),
+      'tool_use': (content, data, msgs) => msgs.add(ChatMessage(
+        type: MessageType.toolCall,
+        toolCalls: [ToolCall(id: data?['id'] ?? '', name: data?['name'] ?? '', description: content)],
+      )),
+      'tool_result': (content, data, msgs) => _updateToolResult(msgs, data?['id'] ?? '', content, data?['is_error'] ?? false),
+    };
+
+    for (final msgData in messagesData) {
+      final type = msgData['type'] as String;
+      final content = msgData['content'] as String? ?? '';
+      final data = msgData['data'] as Map<String, dynamic>?;
+      parsers[type]?.call(content, data, messages);
+    }
+
+    return messages;
+  }
+
+  void _updateToolResult(List<ChatMessage> messages, String toolId, String content, bool isError) {
+    for (int i = messages.length - 1; i >= 0; i--) {
+      final msg = messages[i];
+      if (msg.type == MessageType.toolCall &&
+          msg.toolCalls.isNotEmpty &&
+          msg.toolCalls.first.id == toolId) {
+        messages[i] = msg.updateToolCall(toolId, (tc) => tc.copyWith(
+          result: {'content': content, 'is_error': isError},
+          isExecuting: false,
+        ));
+        break;
+      }
+    }
+  }
+
+  void _addMessagesToSession(String sessionId, List<ChatMessage> messages) {
+    if (messages.isEmpty) return;
+
+    final index = state.sessions.indexWhere((s) => s.id == sessionId);
+    if (index >= 0) {
+      final newSessions = [...state.sessions];
+      for (final msg in messages) {
+        newSessions[index].addMessage(msg);
+      }
+      state = state.copyWith(sessions: newSessions);
+    }
   }
 
   /// 断开 session 连接（仅更新 UI 状态，不取消订阅）
@@ -202,6 +294,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     final userMessage = ChatMessage(
       type: MessageType.user,
       content: content,
+      isPending: true, // 发送时标记为 pending
     );
     _addMessage(sessionId, userMessage);
 
@@ -226,6 +319,23 @@ class SessionNotifier extends StateNotifier<SessionState> {
     }
   }
 
+  // 事件处理器映射
+  late final Map<String, void Function(String, Map<String, dynamic>)> _eventHandlers = {
+    'text_delta': _handleTextDelta,
+    'tool_use_start': _handleToolStart,
+    'tool_result': _handleToolResult,
+    'message_end': (sid, _) => _handleMessageEnd(sid),
+    'error': _handleError,
+    'task_info': _handleTaskInfo,
+    'status': _handleStatus,
+    'prompt_queued': _handlePromptQueued,
+    'prompt_dequeued': _handlePromptDequeued,
+    'session_title_updated': _handleSessionTitleUpdated,
+  };
+
+  // 标记未读的事件类型
+  static const _messageEvents = {'text_delta', 'tool_use_start', 'message_end'};
+
   /// 处理连接池事件
   void _handleEvent(WsEvent event) {
     final sessionId = event.sessionId;
@@ -234,43 +344,12 @@ class SessionNotifier extends StateNotifier<SessionState> {
     debugPrint('[SessionNotifier] Event for $sessionId: ${event.event}');
 
     // 如果收到消息相关事件，且不是当前活跃的 session，标记为未读
-    final isMessageEvent = ['text_delta', 'tool_use_start', 'message_end'].contains(event.event);
-    if (isMessageEvent && state.activeSessionId != sessionId) {
+    if (_messageEvents.contains(event.event) && state.activeSessionId != sessionId) {
       _updateSession(sessionId, (s) => s.copyWith(hasUnread: true));
     }
 
-    switch (event.event) {
-      case 'text_delta':
-        _handleTextDelta(sessionId, event.data);
-        break;
-      case 'tool_use_start':
-        _handleToolStart(sessionId, event.data);
-        break;
-      case 'tool_result':
-        _handleToolResult(sessionId, event.data);
-        break;
-      case 'message_end':
-        _handleMessageEnd(sessionId);
-        break;
-      case 'error':
-        _handleError(sessionId, event.data);
-        break;
-      case 'task_info':
-        _handleTaskInfo(sessionId, event.data);
-        break;
-      case 'status':
-        _handleStatus(sessionId, event.data);
-        break;
-      case 'prompt_queued':
-        _handlePromptQueued(sessionId, event.data);
-        break;
-      case 'prompt_dequeued':
-        _handlePromptDequeued(sessionId, event.data);
-        break;
-      case 'session_title_updated':
-        _handleSessionTitleUpdated(sessionId, event.data);
-        break;
-    }
+    // 使用 handler map 分发事件
+    _eventHandlers[event.event]?.call(sessionId, event.data);
   }
 
   void _handleTextDelta(String sessionId, Map<String, dynamic> data) {
@@ -278,11 +357,8 @@ class SessionNotifier extends StateNotifier<SessionState> {
     final session = state.getSession(sessionId);
     if (session == null) return;
 
-    // 如果最后一条是 status 消息（如 thinking），先移除它
-    if (session.messages.isNotEmpty &&
-        session.messages.last.type == MessageType.status) {
-      _removeLastMessage(sessionId);
-    }
+    // 移除所有 status 消息（如 thinking）
+    _removeAllStatusMessages(sessionId);
 
     // 去重：如果最后一条消息内容相同，跳过
     final updatedSession = state.getSession(sessionId);
@@ -307,11 +383,8 @@ class SessionNotifier extends StateNotifier<SessionState> {
     final session = state.getSession(sessionId);
     if (session == null) return;
 
-    // 如果最后一条是 status 消息（如 thinking），先移除它
-    if (session.messages.isNotEmpty &&
-        session.messages.last.type == MessageType.status) {
-      _removeLastMessage(sessionId);
-    }
+    // 移除所有 status 消息（如 thinking）
+    _removeAllStatusMessages(sessionId);
 
     final toolId = data['id'] as String? ?? const Uuid().v4();
 
@@ -446,7 +519,8 @@ class SessionNotifier extends StateNotifier<SessionState> {
     final message = data['message'] as String?;
 
     if (statusType == 'task_start') {
-      // 任务开始
+      // 任务开始 - 清除 pending 状态
+      _clearPendingMessages(sessionId);
       _updateSession(sessionId, (s) => s.copyWith(isProcessing: true));
       // 添加 task_start 状态消息
       final session = state.getSession(sessionId);
@@ -462,7 +536,8 @@ class SessionNotifier extends StateNotifier<SessionState> {
         );
       }
     } else if (statusType == 'thinking') {
-      // 显示 thinking 状态（替换之前的 task_start）
+      // 显示 thinking 状态（替换之前的 task_start）- 也清除 pending 状态
+      _clearPendingMessages(sessionId);
       _updateSession(sessionId, (s) => s.copyWith(isProcessing: true));
       // 如果最后一条是 status 消息，更新它；否则添加新的
       final session = state.getSession(sessionId);
@@ -536,12 +611,46 @@ class SessionNotifier extends StateNotifier<SessionState> {
     }
   }
 
+  /// 清除所有 pending 用户消息的 pending 状态
+  void _clearPendingMessages(String sessionId) {
+    final index = state.sessions.indexWhere((s) => s.id == sessionId);
+    if (index >= 0) {
+      final newSessions = [...state.sessions];
+      final session = newSessions[index];
+      bool hasChanges = false;
+      for (int i = 0; i < session.messages.length; i++) {
+        final msg = session.messages[i];
+        if (msg.type == MessageType.user && msg.isPending) {
+          session.messages[i] = msg.copyWith(isPending: false);
+          hasChanges = true;
+        }
+      }
+      if (hasChanges) {
+        state = state.copyWith(sessions: newSessions);
+      }
+    }
+  }
+
   void _removeLastMessage(String sessionId) {
     final index = state.sessions.indexWhere((s) => s.id == sessionId);
     if (index >= 0) {
       final newSessions = [...state.sessions];
       if (newSessions[index].messages.isNotEmpty) {
         newSessions[index].messages.removeLast();
+        state = state.copyWith(sessions: newSessions);
+      }
+    }
+  }
+
+  /// 移除所有 status 消息（如 Thinking...）
+  void _removeAllStatusMessages(String sessionId) {
+    final index = state.sessions.indexWhere((s) => s.id == sessionId);
+    if (index >= 0) {
+      final newSessions = [...state.sessions];
+      final session = newSessions[index];
+      final originalLength = session.messages.length;
+      session.messages.removeWhere((m) => m.type == MessageType.status);
+      if (session.messages.length != originalLength) {
         state = state.copyWith(sessions: newSessions);
       }
     }

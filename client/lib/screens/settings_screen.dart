@@ -9,6 +9,7 @@ import '../config/theme.dart';
 import '../models/server_config.dart';
 import '../providers/providers.dart';
 import '../widgets/command_target.dart';
+import 'cli_sessions_screen.dart';
 import 'trash_screen.dart';
 
 /// 服务器配置 JSON 格式
@@ -123,6 +124,94 @@ class SettingsScreen extends ConsumerWidget {
           ),
 
           const SizedBox(height: 24),
+
+          // CLI Sessions Section (per server)
+          if (serverState.servers.isNotEmpty) ...[
+            _buildSectionHeader('CLI Sessions', labelColor),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: cardColor,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: borderColor, width: 0.5),
+              ),
+              child: Column(
+                children: serverState.servers.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final server = entry.value;
+                  final isLast = index == serverState.servers.length - 1;
+
+                  return Column(
+                    children: [
+                      InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => CLISessionsScreen(server: server),
+                            ),
+                          );
+                        },
+                        borderRadius: isLast
+                            ? const BorderRadius.vertical(bottom: Radius.circular(12))
+                            : null,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: ZiaOlive.shade500.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  Icons.terminal,
+                                  color: ZiaOlive.shade500,
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      server.name,
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    Text(
+                                      'View CLI sessions',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: labelColor,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(
+                                Icons.chevron_right,
+                                color: ZiaOlive.shade200,
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (!isLast)
+                        Divider(height: 1, indent: 60, color: borderColor),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
 
           // Data Section
           _buildSectionHeader('Data', labelColor),

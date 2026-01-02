@@ -121,4 +121,31 @@ class ApiService {
     );
     return response.data['content'];
   }
+
+  // ==================== Session 消息 API ====================
+
+  /// 获取 session 消息历史
+  Future<List<Map<String, dynamic>>> getSessionMessages(
+    String workspaceId,
+    String sessionId, {
+    int? limit,
+    int offset = 0,
+  }) async {
+    final response = await _dio.get(
+      '$_baseUrl/api/workspaces/$workspaceId/sessions/$sessionId/messages',
+      queryParameters: {
+        if (limit != null) 'limit': limit,
+        'offset': offset,
+      },
+    );
+    final List<dynamic> messages = response.data['messages'];
+    return messages.cast<Map<String, dynamic>>();
+  }
+
+  /// 清空 session 消息历史
+  Future<void> clearSessionMessages(String workspaceId, String sessionId) async {
+    await _dio.delete(
+      '$_baseUrl/api/workspaces/$workspaceId/sessions/$sessionId/messages',
+    );
+  }
 }
