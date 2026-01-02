@@ -29,6 +29,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   static const _adbChannel = MethodChannel('com.claudecode.claude_code_remote/adb');
 
@@ -204,6 +205,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     return ScreenScope(
       screenId: 'session',
       child: Scaffold(
+        key: _scaffoldKey,
         endDrawer: FileDrawer(
           server: widget.server,
           workspaceId: widget.session.workspaceId,
@@ -582,7 +584,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   }
 
   void _openFileDrawer() {
-    Scaffold.of(context).openEndDrawer();
+    _scaffoldKey.currentState?.openEndDrawer();
   }
 
   void _compactContext() {
