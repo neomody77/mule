@@ -218,6 +218,11 @@ class SandboxAgent:
         docker_args = [
             "docker", "run", "-d",
             "--name", self.container_name,
+            # 资源限制
+            "--memory", "2g",
+            "--cpus", "1",
+            # 安全选项
+            "--security-opt", "no-new-privileges",
             # 以宿主机用户身份运行（解决挂载文件权限问题）
             "--user", f"{host_uid}:{host_gid}",
             # 挂载工作区
