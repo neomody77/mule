@@ -53,6 +53,10 @@ async def list_workspaces(token: str = Depends(verify_token)):
 
     result = []
     for ws in all_workspaces:
+        # 跳过旧的 "default" workspace（已被 token workspace 替代）
+        if ws.id == "default":
+            continue
+
         ws_dict = ws.model_dump() if hasattr(ws, 'model_dump') else ws.__dict__.copy()
         # 用户的 token workspace 显示为 "default"
         if ws.id == user_workspace_id:
