@@ -496,6 +496,13 @@ class SessionNotifier extends StateNotifier<SessionState> {
     _removeAllStatusMessages(sessionId);
 
     final toolId = data['id'] as String? ?? const Uuid().v4();
+    final toolName = data['name'] as String? ?? 'unknown';
+
+    // 特殊处理 TodoWrite 工具 - 更新 session 的 todo list
+    if (toolName == 'TodoWrite') {
+      _handleTodoWrite(sessionId, data);
+      return; // 不显示为普通工具调用
+    }
 
     // 去重：检查是否已有相同 toolId 的消息
     final updatedSession = state.getSession(sessionId);
@@ -511,7 +518,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
 
     final toolCall = ToolCall(
       id: toolId,
-      name: data['name'] as String? ?? 'unknown',
+      name: toolName,
       description: data['description'] as String?,
       isExecuting: true,
     );
@@ -524,6 +531,22 @@ class SessionNotifier extends StateNotifier<SessionState> {
         toolCalls: [toolCall],
       ),
     );
+  }
+
+  /// 处理 TodoWrite 工具调用
+  void _handleTodoWrite(String sessionId, Map<String, dynamic> data) {
+    final input = data['input'] as Map<String, dynamic>?;
+    if (input == null) return;
+
+    final todosData = input['todos'] as List<dynamic>?;
+    if (todosData == null) return;
+
+    final todos = todosData
+        .map((t) => TodoItem.fromJson(t as Map<String, dynamic>))
+        .toList();
+
+    debugPrint('[SessionNotifier] TodoWrite: ${todos.length} todos');
+    _updateSession(sessionId, (s) => s.copyWith(todos: todos));
   }
 
   void _handleToolResult(String sessionId, Map<String, dynamic> data) {

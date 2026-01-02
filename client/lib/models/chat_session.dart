@@ -19,6 +19,40 @@ class PendingPrompt {
   PendingPrompt({required this.id, required this.content, required this.position});
 }
 
+/// Todo 状态
+enum TodoStatus {
+  pending,
+  inProgress,
+  completed,
+}
+
+/// Todo 项目
+class TodoItem {
+  final String content;
+  final String activeForm;
+  final TodoStatus status;
+
+  TodoItem({
+    required this.content,
+    required this.activeForm,
+    required this.status,
+  });
+
+  factory TodoItem.fromJson(Map<String, dynamic> json) {
+    final statusStr = json['status'] as String? ?? 'pending';
+    final status = switch (statusStr) {
+      'in_progress' => TodoStatus.inProgress,
+      'completed' => TodoStatus.completed,
+      _ => TodoStatus.pending,
+    };
+    return TodoItem(
+      content: json['content'] as String? ?? '',
+      activeForm: json['activeForm'] as String? ?? '',
+      status: status,
+    );
+  }
+}
+
 /// 聊天会话模型
 class ChatSession {
   final String id;
@@ -34,6 +68,7 @@ class ChatSession {
   String? error;
   bool hasUnread; // 是否有未读消息（用户离开页面后收到的消息）
   List<PendingPrompt> pendingPrompts; // 排队中的消息
+  List<TodoItem> todos; // 当前任务的 todo list
 
   ChatSession({
     required this.id,
@@ -49,10 +84,12 @@ class ChatSession {
     this.error,
     this.hasUnread = false,
     List<PendingPrompt>? pendingPrompts,
+    List<TodoItem>? todos,
   })  : createdAt = createdAt ?? DateTime.now(),
         lastActiveAt = lastActiveAt ?? DateTime.now(),
         messages = messages ?? [],
-        pendingPrompts = pendingPrompts ?? [];
+        pendingPrompts = pendingPrompts ?? [],
+        todos = todos ?? [];
 
   /// 是否已连接
   bool get isConnected => connectionState == SessionConnectionState.connected;
@@ -117,6 +154,7 @@ class ChatSession {
     String? error,
     bool? hasUnread,
     List<PendingPrompt>? pendingPrompts,
+    List<TodoItem>? todos,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -132,6 +170,7 @@ class ChatSession {
       error: error,
       hasUnread: hasUnread ?? this.hasUnread,
       pendingPrompts: pendingPrompts ?? List.from(this.pendingPrompts),
+      todos: todos ?? List.from(this.todos),
     );
   }
 

@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/theme.dart';
-import '../models/chat_session.dart';
+import '../models/chat_session.dart' show ChatSession, SessionConnectionState, PendingPrompt, TodoItem, TodoStatus;
 import '../models/server_config.dart';
 import '../providers/providers.dart';
 import '../widgets/command_target.dart';
@@ -225,52 +225,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                   ],
                 ),
           actions: [
-            // 更多操作
-            PopupMenuButton<String>(
-              onSelected: _handleMenuAction,
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'files',
-                  child: Row(
-                    children: [
-                      Icon(Icons.folder_outlined, size: 20),
-                      SizedBox(width: 8),
-                      Text('Files'),
-                    ],
-                  ),
-                ),
-                const PopupMenuDivider(),
-                const PopupMenuItem(
-                  value: 'clear',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete_outline, size: 20),
-                      SizedBox(width: 8),
-                      Text('Clear Messages'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'rename',
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit_outlined, size: 20),
-                      SizedBox(width: 8),
-                      Text('Rename'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'compact',
-                  child: Row(
-                    children: [
-                      Icon(Icons.compress, size: 20),
-                      SizedBox(width: 8),
-                      Text('Compact Context'),
-                    ],
-                  ),
-                ),
-              ],
+            // 更多操作 - 使用 BottomSheet
+            IconButton(
+              icon: const Icon(Icons.more_vert),
+              onPressed: _showActionsSheet,
             ),
           ],
         ),
@@ -566,21 +524,158 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     );
   }
 
-  void _handleMenuAction(String action) {
-    switch (action) {
-      case 'files':
-        _openFileDrawer();
-        break;
-      case 'clear':
-        _confirmClearMessages();
-        break;
-      case 'rename':
-        _showRenameDialog();
-        break;
-      case 'compact':
-        _compactContext();
-        break;
-    }
+  void _showActionsSheet() {
+    final session = ref.read(sessionProvider).getSession(_sessionId);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.4,
+        minChildSize: 0.25,
+        maxChildSize: 0.8,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            // 拖动指示器
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: ZiaOlive.shade200,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Todo List (如果有的话)
+            if (session != null && session.todos.isNotEmpty) ...[
+              _buildTodoList(session.todos),
+              const Divider(height: 1),
+            ],
+            // 操作菜单
+            Expanded(
+              child: ListView(
+                controller: scrollController,
+                children: [
+                  _buildActionTile(
+                    icon: Icons.folder_outlined,
+                    title: 'Files',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _openFileDrawer();
+                    },
+                  ),
+                  const Divider(height: 1),
+                  _buildActionTile(
+                    icon: Icons.delete_outline,
+                    title: 'Clear Messages',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _confirmClearMessages();
+                    },
+                  ),
+                  _buildActionTile(
+                    icon: Icons.edit_outlined,
+                    title: 'Rename',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showRenameDialog();
+                    },
+                  ),
+                  _buildActionTile(
+                    icon: Icons.compress,
+                    title: 'Compact Context',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _compactContext();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionTile({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: ZiaOlive.shade400),
+      title: Text(title),
+      onTap: onTap,
+    );
+  }
+
+  Widget _buildTodoList(List<TodoItem> todos) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.checklist, size: 16, color: ZiaOlive.shade400),
+              const SizedBox(width: 8),
+              Text(
+                'Tasks',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: ZiaOlive.shade400,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...todos.map((todo) => _buildTodoItem(todo)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTodoItem(TodoItem todo) {
+    final (icon, color) = switch (todo.status) {
+      TodoStatus.completed => (Icons.check_circle, ZiaOlive.success),
+      TodoStatus.inProgress => (Icons.radio_button_checked, ZiaOlive.warning),
+      TodoStatus.pending => (Icons.radio_button_unchecked, ZiaOlive.shade300),
+    };
+
+    final text = todo.status == TodoStatus.inProgress
+        ? todo.activeForm
+        : todo.content;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 13,
+                color: todo.status == TodoStatus.completed
+                    ? ZiaOlive.shade300
+                    : ZiaOlive.shade500,
+                decoration: todo.status == TodoStatus.completed
+                    ? TextDecoration.lineThrough
+                    : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _openFileDrawer() {
