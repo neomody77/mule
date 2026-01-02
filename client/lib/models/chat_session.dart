@@ -69,6 +69,8 @@ class ChatSession {
   bool hasUnread; // 是否有未读消息（用户离开页面后收到的消息）
   List<PendingPrompt> pendingPrompts; // 排队中的消息
   List<TodoItem> todos; // 当前任务的 todo list
+  bool deleted; // 是否已软删除
+  DateTime? deletedAt; // 删除时间
 
   ChatSession({
     required this.id,
@@ -85,6 +87,8 @@ class ChatSession {
     this.hasUnread = false,
     List<PendingPrompt>? pendingPrompts,
     List<TodoItem>? todos,
+    this.deleted = false,
+    this.deletedAt,
   })  : createdAt = createdAt ?? DateTime.now(),
         lastActiveAt = lastActiveAt ?? DateTime.now(),
         messages = messages ?? [],
@@ -123,6 +127,10 @@ class ChatSession {
       name: json['name'] as String,
       createdAt: DateTime.parse(json['createdAt'] as String),
       lastActiveAt: DateTime.parse(json['lastActiveAt'] as String),
+      deleted: json['deleted'] as bool? ?? false,
+      deletedAt: json['deletedAt'] != null
+          ? DateTime.parse(json['deletedAt'] as String)
+          : null,
     );
   }
 
@@ -136,6 +144,8 @@ class ChatSession {
       'name': name,
       'createdAt': createdAt.toIso8601String(),
       'lastActiveAt': lastActiveAt.toIso8601String(),
+      'deleted': deleted,
+      'deletedAt': deletedAt?.toIso8601String(),
     };
   }
 
@@ -155,6 +165,9 @@ class ChatSession {
     bool? hasUnread,
     List<PendingPrompt>? pendingPrompts,
     List<TodoItem>? todos,
+    bool? deleted,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -171,6 +184,8 @@ class ChatSession {
       hasUnread: hasUnread ?? this.hasUnread,
       pendingPrompts: pendingPrompts ?? List.from(this.pendingPrompts),
       todos: todos ?? List.from(this.todos),
+      deleted: deleted ?? this.deleted,
+      deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
     );
   }
 
