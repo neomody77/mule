@@ -8,6 +8,7 @@ import '../models/server_config.dart';
 import '../providers/providers.dart';
 import '../widgets/command_target.dart';
 import '../widgets/message_bubble.dart';
+import 'file_manager_screen.dart';
 
 /// Session 聊天界面
 class SessionScreen extends ConsumerStatefulWidget {
@@ -222,6 +223,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
             PopupMenuButton<String>(
               onSelected: _handleMenuAction,
               itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'files',
+                  child: Row(
+                    children: [
+                      Icon(Icons.folder_outlined, size: 20),
+                      SizedBox(width: 8),
+                      Text('Files'),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(),
                 const PopupMenuItem(
                   value: 'clear',
                   child: Row(
@@ -550,6 +562,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
 
   void _handleMenuAction(String action) {
     switch (action) {
+      case 'files':
+        _openFileManager();
+        break;
       case 'clear':
         _confirmClearMessages();
         break;
@@ -560,6 +575,18 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
         _compactContext();
         break;
     }
+  }
+
+  void _openFileManager() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FileManagerScreen(
+          server: widget.server,
+          workspaceId: widget.session.workspaceId,
+        ),
+      ),
+    );
   }
 
   void _compactContext() {
