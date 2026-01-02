@@ -35,27 +35,29 @@ router = APIRouter()
 async def list_workspaces(token: str = Depends(verify_token)):
     """列出所有工作区
 
-    返回用户 token 对应的 workspace，显示为 "default"
+    用户的 token workspace 显示为 "default"，其他 workspace 正常显示
     """
     user_workspace_id = settings.get_workspace_id_for_token(token)
 
-    # 获取用户的 workspace，如果不存在则创建
+    # 确保用户的默认 workspace 存在
     user_ws = workspace_manager.get_workspace(user_workspace_id)
     if not user_ws:
-        # 创建用户专属 workspace
         workspace_manager.create_workspace_with_id(
             user_workspace_id,
             "Default Workspace",
             "Your personal workspace"
         )
-        user_ws = workspace_manager.get_workspace(user_workspace_id)
 
-    # 返回时将 id 显示为 "default"
+    # 获取所有 workspace
+    all_workspaces = workspace_manager.list_workspaces()
+
     result = []
-    if user_ws:
-        ws_dict = user_ws.model_dump() if hasattr(user_ws, 'model_dump') else user_ws.__dict__.copy()
-        ws_dict['id'] = 'default'
-        ws_dict['name'] = 'Default Workspace'
+    for ws in all_workspaces:
+        ws_dict = ws.model_dump() if hasattr(ws, 'model_dump') else ws.__dict__.copy()
+        # 用户的 token workspace 显示为 "default"
+        if ws.id == user_workspace_id:
+            ws_dict['id'] = 'default'
+            ws_dict['name'] = 'Default Workspace'
         result.append(WorkspaceInfo(**ws_dict))
 
     return result
