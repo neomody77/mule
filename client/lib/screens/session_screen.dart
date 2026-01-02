@@ -251,11 +251,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                 onPressed: _showTodoSheet,
                 tooltip: 'Tasks',
               ),
-            // Files 按钮
+            // Clear 按钮
             IconButton(
-              icon: const Icon(Icons.folder_outlined),
-              onPressed: _openFileDrawer,
-              tooltip: 'Files',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: _confirmClearMessages,
+              tooltip: 'Clear Messages',
             ),
             // Compact 按钮
             IconButton(
@@ -263,11 +263,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
               onPressed: _compactContext,
               tooltip: 'Compact Context',
             ),
-            // Clear 按钮
+            // Files 按钮
             IconButton(
-              icon: const Icon(Icons.delete_outline),
-              onPressed: _confirmClearMessages,
-              tooltip: 'Clear Messages',
+              icon: const Icon(Icons.folder_outlined),
+              onPressed: _openFileDrawer,
+              tooltip: 'Files',
             ),
           ],
         ),
