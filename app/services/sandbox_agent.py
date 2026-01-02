@@ -221,6 +221,15 @@ class SandboxAgent:
                 stderr=asyncio.subprocess.PIPE,
             )
 
+            # 后台任务持续消费 stderr，避免缓冲区满导致死锁
+            stderr_lines: list[str] = []
+
+            async def drain_stderr():
+                async for line in self._process.stderr:
+                    stderr_lines.append(line.decode('utf-8').rstrip())
+
+            stderr_task = asyncio.create_task(drain_stderr())
+
             # 处理流式输出
             async for line in self._process.stdout:
                 line_text = line.decode('utf-8').strip()
@@ -316,9 +325,10 @@ class SandboxAgent:
 
             await self._process.wait()
 
-            stderr = await self._process.stderr.read()
-            if stderr:
-                logger.warning(f"Sandbox stderr: {stderr.decode('utf-8')}")
+            # 等待 stderr 读取完成
+            await stderr_task
+            if stderr_lines:
+                logger.warning(f"Sandbox stderr: {chr(10).join(stderr_lines)}")
 
         except Exception as e:
             logger.error(f"Sandbox execution error: {e}", exc_info=True)
