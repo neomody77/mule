@@ -392,6 +392,18 @@ class ConnectionPool {
     });
   }
 
+  /// 发送压缩上下文请求
+  void sendCompact(String sessionId) {
+    final sub = _findSubscription(sessionId);
+    if (sub == null) return;
+
+    _sendToServer(sub.serverId, {
+      'type': 'compact',
+      'workspace_id': sub.workspaceId,
+      'session_id': sub.sessionId,
+    });
+  }
+
   /// 发送 ping
   void sendPing(String serverId) {
     _sendToServer(serverId, {'type': 'ping'});

@@ -169,6 +169,15 @@ class SandboxAgent:
             if os.environ.get(proxy_var):
                 docker_args.extend(["-e", f"{proxy_var}={os.environ[proxy_var]}"])
 
+        # 传递 GitHub CLI 配置（如果启用）
+        if settings.share_gh_config:
+            gh_config_dir = Path.home() / ".config" / "gh"
+            if gh_config_dir.exists():
+                docker_args.extend([
+                    "-v", f"{gh_config_dir}:{container_home}/.config/gh:ro"
+                ])
+                logger.info(f"Mounting gh config from {gh_config_dir}")
+
         docker_args.extend([
             SANDBOX_IMAGE,
             "sleep", "infinity"
@@ -382,6 +391,9 @@ class SandboxAgent:
             "Bash": lambda: f"Running: {_truncate(tool_input.get('command', ''))}",
             "Glob": lambda: f"Searching: {tool_input.get('pattern', '')}",
             "Grep": lambda: f"Grep: {tool_input.get('pattern', '')}",
+            "WebSearch": lambda: f"Searching: {tool_input.get('query', '')}",
+            "WebFetch": lambda: f"Fetching: {_truncate(tool_input.get('url', ''))}",
+            "Task": lambda: f"Task: {tool_input.get('description', '')}",
         }
 
         generator = generators.get(tool_name)
@@ -396,6 +408,62 @@ class SandboxAgent:
                 await asyncio.wait_for(self._process.wait(), timeout=5.0)
             except asyncio.TimeoutError:
                 self._process.kill()
+
+    async def compact(self) -> dict:
+        """压缩上下文 - 在容器内执行 /compact 命令"""
+        if not self.session_id:
+            raise ValueError("No active session to compact")
+
+        logger.info(f"Compacting context for session {self.session_id} in sandbox")
+
+        try:
+            # 确保容器运行
+            self._ensure_container()
+
+            # 在容器中执行 claude --resume session_id -p "/compact"
+            claude_cmd = ["claude", "--resume", self.session_id, "-p", "/compact", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]
+
+            docker_exec = [
+                "docker", "exec", "-w", "/workspace",
+                self.container_name,
+                "/bin/bash", "-lc",
+                " ".join(f'"{arg}"' if " " in arg else arg for arg in claude_cmd)
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *docker_exec,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if stderr:
+                logger.warning(f"Compact stderr: {stderr.decode()}")
+
+            # 解析结果
+            result_text = ""
+            for line in stdout.decode().strip().split('\n'):
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    if event.get("type") == "result":
+                        result_text = event.get("result", "")
+                        self.session_id = event.get("session_id", self.session_id)
+                except json.JSONDecodeError:
+                    continue
+
+            logger.info(f"Compact completed: {result_text}")
+            return {
+                "success": True,
+                "session_id": self.session_id,
+                "result": result_text or "Context compacted successfully",
+            }
+
+        except Exception as e:
+            logger.error(f"Compact failed: {e}")
+            raise
 
     def stop_container(self) -> None:
         """停止容器"""

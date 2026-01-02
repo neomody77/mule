@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -142,33 +143,83 @@ class _MessageBubbleState extends State<MessageBubble> {
       );
     }
 
+    // 判断是否为大块消息（超过 200 字符或包含代码块）
+    final isLargeMessage = message.content.length > 200 ||
+        message.content.contains('```');
+
     // Assistant 消息使用 Markdown 渲染
     // 使用 SelectionArea 包裹以支持文本选择，同时保持链接点击功能
-    return SelectionArea(
-      child: MarkdownBody(
-        data: message.content,
-        selectable: false,
-        onTapLink: (text, href, title) {
-          debugPrint('[MessageBubble] Link tapped: text=$text, href=$href');
-          _launchUrl(href);
-        },
-        styleSheet: MarkdownStyleSheet(
-        p: TextStyle(
-          color: Theme.of(context).colorScheme.onSurface,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SelectionArea(
+          child: MarkdownBody(
+            data: message.content,
+            selectable: false,
+            onTapLink: (text, href, title) {
+              debugPrint('[MessageBubble] Link tapped: text=$text, href=$href');
+              _launchUrl(href);
+            },
+            styleSheet: MarkdownStyleSheet(
+              p: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              a: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                decoration: TextDecoration.underline,
+              ),
+              code: TextStyle(
+                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
+                fontFamily: 'monospace',
+              ),
+              codeblockDecoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
         ),
-        a: TextStyle(
-          color: Theme.of(context).colorScheme.primary,
-          decoration: TextDecoration.underline,
-        ),
-        code: TextStyle(
-          backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
-          fontFamily: 'monospace',
-        ),
-        codeblockDecoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
+        if (isLargeMessage) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: InkWell(
+              onTap: () => _copyToClipboard(context, message.content),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.content_copy,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '复制',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _copyToClipboard(BuildContext context, String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已复制'),
+        duration: Duration(seconds: 1),
       ),
     );
   }

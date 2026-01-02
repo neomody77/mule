@@ -52,6 +52,18 @@ class ServerState {
       return null;
     }
   }
+
+  /// 检查是否存在相同配置的服务器（host + port）
+  /// 返回找到的服务器，如果不存在返回 null
+  ServerConfig? findDuplicateServer(String host, int port, {String? excludeId}) {
+    try {
+      return servers.firstWhere(
+        (s) => s.host == host && s.port == port && s.id != excludeId,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// 服务器 Notifier

@@ -3,6 +3,7 @@ Claude Code Remote - FastAPI 主入口
 
 移动端远程编码平台服务端
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,8 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 
 from app.config import settings
-from app.api import workspaces, websocket, connect, cli_sessions
+from app.api import workspaces, websocket, cli_sessions, webhook
 from app.services.workspace_manager import workspace_manager
+from app.services.message_store import message_store
+from app.services.plan_monitor import plan_monitor_registry, PLAN_MONITOR_SESSION_ID
 
 # 配置日志
 logging.basicConfig(
@@ -30,6 +33,32 @@ logging.getLogger("claude_agent_sdk._internal.client").setLevel(logging.DEBUG)
 logging.getLogger("claude_agent_sdk._internal.query").setLevel(logging.DEBUG)
 
 
+async def _execute_plan_prompt(workspace_id: str, session_id: str, content: str):
+    """执行 plan monitor 的 prompt"""
+    from app.services.task_manager import task_manager
+
+    # 确保 session 存在
+    message_store.ensure_session_exists(
+        workspace_id,
+        session_id,
+        title="Plan Monitor",
+        session_type="plan_monitor"
+    )
+
+    # 保存用户消息
+    message_store.append_user_message(workspace_id, session_id, content)
+
+    # 创建任务
+    task_key = f"{workspace_id}:{session_id}"
+    task = task_manager.create_task(task_key, content)
+
+    # 获取或创建 Agent 并启动任务
+    agent = websocket.manager.get_or_create_agent(workspace_id, session_id)
+    task_manager.start_task(task, agent)
+
+    logger.info(f"Plan monitor task started: {task.id} for {workspace_id}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -42,12 +71,41 @@ async def lifespan(app: FastAPI):
     default_ws = workspace_manager.ensure_default_workspace()
     logger.info(f"Default workspace ready: {default_ws.name} ({default_ws.id})")
 
+    # 为每个 token 初始化对应的 workspace 和 plan monitor
+    for token in settings.token_list:
+        workspace_id = settings.get_workspace_id_for_token(token)
+        workspace_path = settings.workspace_base_dir / workspace_id
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Initialized workspace for token: {workspace_id}")
+
+        # 确保 plan-monitor session 存在
+        message_store.ensure_session_exists(
+            workspace_id,
+            PLAN_MONITOR_SESSION_ID,
+            title="Plan Monitor",
+            session_type="plan_monitor"
+        )
+
+        # 注册 plan monitor
+        plan_monitor_registry.get_monitor(workspace_id)
+
+    # 设置全局执行回调
+    plan_monitor_registry.set_execute_callback(_execute_plan_prompt)
+
+    # 启动所有 plan monitors
+    await plan_monitor_registry.start_all_monitors()
+    logger.info(f"Started {len(settings.token_list)} plan monitors")
+
     logger.info("Server started successfully")
 
     yield
 
     # 关闭时
     logger.info("Shutting down server...")
+
+    # 停止所有 plan monitors
+    plan_monitor_registry.stop_all_monitors()
+    logger.info("Stopped all plan monitors")
 
 
 app = FastAPI(
@@ -69,8 +127,8 @@ app.add_middleware(
 # 注册路由
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(websocket.router, tags=["websocket"])
-app.include_router(connect.router, prefix="/api/connect", tags=["connect"])
 app.include_router(cli_sessions.router, tags=["cli-sessions"])
+app.include_router(webhook.router, tags=["webhook"])
 
 
 @app.get("/api")
@@ -88,30 +146,6 @@ async def api_info():
 async def health_check():
     """健康检查"""
     return {"status": "healthy"}
-
-
-@app.get("/qr")
-async def qr_page(
-    name: str = Query(None, description="服务器名称"),
-    host: str = Query(None, description="自定义 host"),
-    https: bool = Query(False, description="是否使用 HTTPS"),
-):
-    """
-    快捷二维码页面
-
-    访问 /qr 即可显示二维码，方便移动端扫码连接
-    """
-    url = "/api/connect/qrcode/html"
-    params = []
-    if name:
-        params.append(f"name={name}")
-    if host:
-        params.append(f"host={host}")
-    if https:
-        params.append("https=true")
-    if params:
-        url += "?" + "&".join(params)
-    return RedirectResponse(url=url)
 
 
 # 静态文件服务 (Flutter Web)

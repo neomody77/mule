@@ -366,6 +366,36 @@ class ClaudeCodeAgent:
             except Exception as e:
                 logger.error(f"Failed to interrupt task: {e}")
 
+    async def compact(self) -> dict:
+        """压缩上下文 - 手动触发上下文压缩"""
+        if not self.session_id:
+            raise ValueError("No active session to compact")
+
+        logger.info(f"Compacting context for session {self.session_id}")
+
+        try:
+            # 确保客户端已连接
+            await self._ensure_connected()
+
+            # 发送 /compact 命令让 Claude 压缩上下文
+            await self._client.query("/compact")
+
+            # 处理响应
+            async for message in self._client.receive_response():
+                if isinstance(message, ResultMessage):
+                    logger.info(f"Compact completed: {message.result}")
+                    return {
+                        "success": True,
+                        "session_id": message.session_id,
+                        "result": message.result or "Context compacted successfully",
+                    }
+
+            return {"success": True, "message": "Context compacted"}
+
+        except Exception as e:
+            logger.error(f"Compact failed: {e}")
+            raise
+
     async def disconnect(self) -> None:
         """断开连接"""
         if self._client and self._is_connected:

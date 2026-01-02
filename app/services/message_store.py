@@ -27,12 +27,14 @@ class SessionInfo:
         title: str | None = None,
         created_at: str | None = None,
         updated_at: str | None = None,
+        session_type: str = "normal",  # normal | plan_monitor | webhook
     ):
         self.id = id
         self.workspace_id = workspace_id
         self.title = title
         self.created_at = created_at or datetime.now().isoformat()
         self.updated_at = updated_at or self.created_at
+        self.session_type = session_type
 
     def to_dict(self) -> dict:
         return {
@@ -41,6 +43,7 @@ class SessionInfo:
             "title": self.title,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "type": self.session_type,
         }
 
     @classmethod
@@ -51,6 +54,7 @@ class SessionInfo:
             title=data.get("title"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
+            session_type=data.get("type", "normal"),
         )
 
 
@@ -93,6 +97,7 @@ class MessageStore:
         workspace_id: str,
         session_id: str,
         title: str | None = None,
+        session_type: str = "normal",
     ) -> SessionInfo:
         """创建新 session"""
         sessions = self._load_sessions_meta(workspace_id)
@@ -106,6 +111,7 @@ class MessageStore:
             title=title,
             created_at=now,
             updated_at=now,
+            session_type=session_type,
         )
         sessions[session_id] = session_info.to_dict()
         self._save_sessions_meta(workspace_id, sessions)
@@ -178,12 +184,13 @@ class MessageStore:
         workspace_id: str,
         session_id: str,
         title: str | None = None,
+        session_type: str = "normal",
     ) -> SessionInfo:
         """确保 session 存在，不存在则创建"""
         session = self.get_session(workspace_id, session_id)
         if session:
             return session
-        return self.create_session(workspace_id, session_id, title)
+        return self.create_session(workspace_id, session_id, title, session_type)
 
     def _get_session_file(self, workspace_id: str, session_id: str) -> Path:
         """获取 session 消息文件路径"""

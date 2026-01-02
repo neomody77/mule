@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,9 @@ import '../providers/providers.dart';
 import '../widgets/command_target.dart';
 import 'cli_sessions_screen.dart';
 import 'trash_screen.dart';
+
+// Web-specific imports
+import 'dart:html' if (dart.library.io) 'settings_screen_stub.dart' as html;
 
 /// 服务器配置 JSON 格式
 /// {
@@ -856,15 +860,67 @@ class _ServerFormSheetState extends ConsumerState<_ServerFormSheet> {
 
   bool get isEditing => widget.server != null;
 
+  /// 从当前页面 URL 获取服务器默认配置（仅 PWA/Web 模式）
+  static ({String name, String host, int port, bool useHttps})? _getDefaultsFromUrl() {
+    if (!kIsWeb) return null;
+
+    try {
+      final location = html.window.location;
+      // ignore: unnecessary_cast - 使用 as dynamic 避免平台差异导致的 null 检查问题
+      final protocol = (location.protocol as dynamic)?.toString() ?? '';
+      final hostname = (location.hostname as dynamic)?.toString() ?? '';
+      final portStr = (location.port as dynamic)?.toString() ?? '';
+
+      if (hostname.isEmpty) return null;
+
+      // 解析端口，如果为空则使用默认端口
+      int port = 8080;
+      if (portStr.isNotEmpty) {
+        port = int.tryParse(portStr) ?? 8080;
+      } else {
+        // 没有端口时，根据协议使用默认端口
+        port = protocol == 'https:' ? 443 : 80;
+      }
+
+      final useHttps = protocol == 'https:';
+
+      // 生成服务器名称
+      String name = hostname;
+      if (hostname.contains('.')) {
+        // 使用域名的第一部分作为名称
+        name = hostname.split('.').first;
+      }
+      // 首字母大写
+      if (name.isNotEmpty) {
+        name = name[0].toUpperCase() + name.substring(1);
+      }
+
+      return (name: name, host: hostname, port: port, useHttps: useHttps);
+    } catch (e) {
+      return null;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.server?.name ?? '');
-    _hostController = TextEditingController(text: widget.server?.host ?? '');
-    _portController =
-        TextEditingController(text: (widget.server?.port ?? 8000).toString());
-    _tokenController = TextEditingController(text: widget.server?.token ?? '');
-    _useHttps = widget.server?.useHttps ?? false;
+
+    if (widget.server != null) {
+      // 编辑模式：使用现有服务器配置
+      _nameController = TextEditingController(text: widget.server!.name);
+      _hostController = TextEditingController(text: widget.server!.host);
+      _portController = TextEditingController(text: widget.server!.port.toString());
+      _tokenController = TextEditingController(text: widget.server!.token);
+      _useHttps = widget.server!.useHttps;
+    } else {
+      // 新增模式：尝试从 URL 获取默认值（PWA 模式）
+      final defaults = _getDefaultsFromUrl();
+      _nameController = TextEditingController(text: defaults?.name ?? '');
+      _hostController = TextEditingController(text: defaults?.host ?? '');
+      _portController = TextEditingController(text: (defaults?.port ?? 8080).toString());
+      _tokenController = TextEditingController(text: ''); // Token 始终需要手动输入
+      _useHttps = defaults?.useHttps ?? false;
+    }
   }
 
   @override
@@ -886,6 +942,60 @@ class _ServerFormSheetState extends ConsumerState<_ServerFormSheet> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all required fields')),
       );
+      return;
+    }
+
+    // 检查是否存在相同配置的服务器
+    final serverState = ref.read(serverProvider);
+    final existingServer = serverState.findDuplicateServer(
+      host,
+      port,
+      excludeId: widget.server?.id, // 编辑模式时排除自身
+    );
+
+    if (existingServer != null) {
+      // 已存在相同配置，询问用户
+      final shouldContinue = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Server Already Exists'),
+          content: Text(
+            'A server with the same address ($host:$port) already exists as "${existingServer.name}".\n\nDo you want to update the existing server instead?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Update Existing'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldContinue != true) return;
+
+      // 更新现有服务器
+      setState(() => _isLoading = true);
+      try {
+        await ref.read(serverProvider.notifier).updateServer(
+          existingServer.copyWith(
+            name: name,
+            token: token,
+            useHttps: _useHttps,
+          ),
+        );
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Updated "${existingServer.name}"')),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
       return;
     }
 

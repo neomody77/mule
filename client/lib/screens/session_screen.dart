@@ -37,12 +37,14 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   bool _userScrolledUp = false;
   double _lastKeyboardHeight = 0;
 
-  // 判断是否在底部附近（允许50像素的误差）
+  // 判断是否在底部附近（允许半屏的误差）
   bool get _isAtBottom {
     if (!_scrollController.hasClients) return true;
     final maxScroll = _scrollController.position.maxScrollExtent;
     final currentScroll = _scrollController.position.pixels;
-    return maxScroll - currentScroll < 50;
+    final viewportHeight = _scrollController.position.viewportDimension;
+    // 如果距离底部不超过半屏，认为是在底部
+    return maxScroll - currentScroll < viewportHeight / 2;
   }
 
   @override
@@ -55,6 +57,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
 
     // 监听滚动位置
     _scrollController.addListener(_onScroll);
+
+    // 监听输入框焦点变化，获得焦点时滚动到底部
+    _focusNode.addListener(_onFocusChange);
 
     // 设置 ADB 方法通道处理器
     _adbChannel.setMethodCallHandler(_handleAdbMethod);
@@ -75,6 +80,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
       _userScrolledUp = true;
     } else {
       _userScrolledUp = false;
+    }
+  }
+
+  void _onFocusChange() {
+    // 当输入框获得焦点时，滚动到底部
+    if (_focusNode.hasFocus) {
+      _userScrolledUp = false;
+      // 延迟一下等键盘弹出
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) _forceScrollToBottom();
+      });
     }
   }
 
@@ -107,6 +123,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     WidgetsBinding.instance.removeObserver(this);
     _adbChannel.setMethodCallHandler(null);
     _scrollController.removeListener(_onScroll);
+    _focusNode.removeListener(_onFocusChange);
     _inputController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -225,6 +242,16 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                     ],
                   ),
                 ),
+                const PopupMenuItem(
+                  value: 'compact',
+                  child: Row(
+                    children: [
+                      Icon(Icons.compress, size: 20),
+                      SizedBox(width: 8),
+                      Text('Compact Context'),
+                    ],
+                  ),
+                ),
               ],
             ),
           ],
@@ -245,7 +272,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         itemCount: session.messages.length,
                         itemBuilder: (context, index) {
-                          return MessageBubble(message: session.messages[index]);
+                          final message = session.messages[index];
+                          return MessageBubble(
+                            key: ValueKey(message.id),
+                            message: message,
+                          );
                         },
                       ),
           ),
@@ -467,7 +498,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                 child: TextField(
                   controller: _inputController,
                   focusNode: _focusNode,
-                  enabled: isConnected, // 只要连接就可以输入
+                  // 始终允许用户选中输入框，方便提前输入
                   decoration: InputDecoration(
                     hintText: !isConnected
                         ? 'Waiting for connection...'
@@ -525,7 +556,14 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
       case 'rename':
         _showRenameDialog();
         break;
+      case 'compact':
+        _compactContext();
+        break;
     }
+  }
+
+  void _compactContext() {
+    ref.read(sessionProvider.notifier).compactContext(_sessionId);
   }
 
   void _confirmClearMessages() {

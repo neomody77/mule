@@ -41,6 +41,21 @@ class Settings(BaseSettings):
         """验证 token 是否有效"""
         return token in self.token_list
 
+    def get_workspace_id_for_token(self, token: str) -> str:
+        """
+        根据 token 获取对应的 workspace_id
+
+        每个 token 对应一个独立的 workspace，使用 token 的 hash 前缀作为 workspace_id
+        这样可以保证：
+        1. 相同 token 始终映射到同一个 workspace
+        2. 不同 token 映射到不同 workspace
+        3. workspace_id 不会泄露 token 信息
+        """
+        import hashlib
+        # 使用 token 的 sha256 hash 前 8 位作为 workspace_id
+        token_hash = hashlib.sha256(token.encode()).hexdigest()[:8]
+        return f"ws-{token_hash}"
+
     # Claude Agent SDK 使用系统登录的凭证，无需配置 API key
 
     # WebSocket 配置
@@ -53,6 +68,9 @@ class Settings(BaseSettings):
     # Agent 后端配置: claude, sandbox, adk
     agent_backend: str = "claude"  # claude=直接使用SDK, sandbox=Docker隔离, adk=Google ADK
     adk_model: str = "gemini-2.0-flash"  # Google ADK 使用的模型
+
+    # GitHub CLI 配置传递（仅 sandbox 模式）
+    share_gh_config: bool = False  # 是否将宿主机 gh 配置传递给容器
 
     model_config = {
         "env_file": ".env",

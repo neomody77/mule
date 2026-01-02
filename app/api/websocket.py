@@ -498,6 +498,40 @@ async def _handle_cancel(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+async def _handle_compact(ctx: MessageHandlerContext) -> bool:
+    """处理 compact 消息 - 压缩上下文"""
+    agent = manager.get_or_create_agent(ctx.workspace_id, ctx.session_id)
+
+    # 检查 agent 是否支持 compact
+    if not hasattr(agent, 'compact'):
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": "Agent does not support compact"}
+        })
+        return True
+
+    # 通知开始压缩
+    await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+        "event": "status",
+        "data": {"type": "compacting", "message": "Compacting context..."}
+    })
+
+    try:
+        result = await agent.compact()
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "status",
+            "data": {"type": "compact_done", "message": "Context compacted", "result": result}
+        })
+    except Exception as e:
+        logger.error(f"Compact failed: {e}")
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": f"Compact failed: {str(e)}"}
+        })
+
+    return True
+
+
 async def _handle_history(ctx: MessageHandlerContext) -> bool:
     """处理 history 消息"""
     from_index = ctx.data.get("from_index", 0)
@@ -526,6 +560,7 @@ _MESSAGE_HANDLERS: Dict[str, Any] = {
     "prompt": _handle_prompt,
     "sync": _handle_sync,
     "cancel": _handle_cancel,
+    "compact": _handle_compact,
     "history": _handle_history,
 }
 

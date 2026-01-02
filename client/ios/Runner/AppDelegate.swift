@@ -11,3 +11,16 @@ import UIKit
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
+
+// 禁用键盘上方的导航工具栏 (Input Accessory View)
+extension UITextField {
+  open override var inputAccessoryView: UIView? {
+    return nil
+  }
+}
+
+extension UITextView {
+  open override var inputAccessoryView: UIView? {
+    return nil
+  }
+}

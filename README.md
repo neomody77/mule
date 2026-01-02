@@ -144,6 +144,12 @@ workspaces/{id}              →  /workspace
 
 这样容器内的 Claude Code 可以直接使用宿主机的登录状态，无需在容器内重新登录。
 
+**GitHub CLI 配置传递（可选）：**
+```bash
+SHARE_GH_CONFIG=true
+```
+启用后会将宿主机的 `~/.config/gh/` 目录只读挂载到容器，允许容器内使用 `gh` 命令操作 GitHub（创建 PR、管理 issues 等）。前提是宿主机已通过 `gh auth login` 登录。
+
 ## WebSocket 协议
 
 统一端点: `/ws`

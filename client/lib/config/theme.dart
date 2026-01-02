@@ -37,6 +37,7 @@ class MuleTheme {
         surface: Colors.white,
         onSurface: ZiaOlive.shade400,
         surfaceContainerHighest: ZiaOlive.shade50,
+        surfaceContainerHigh: ZiaOlive.shade100,  // 代码块背景
         outline: ZiaOlive.shade100,
         error: ZiaOlive.error,
       ),
@@ -130,6 +131,7 @@ class MuleTheme {
         surface: ZiaOlive.shade800,
         onSurface: ZiaOlive.shade100,
         surfaceContainerHighest: ZiaOlive.shade900,
+        surfaceContainerHigh: ZiaOlive.shade700,  // 代码块背景
         outline: ZiaOlive.shade700,
         error: ZiaOlive.error,
       ),

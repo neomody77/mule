@@ -264,7 +264,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     );
   }
 
-  /// 从服务端加载消息历史
+  /// 从服务端加载消息历史（分批加载：先显示最近5条，后台加载剩余）
   Future<void> _loadMessageHistory(
     String sessionId,
     String workspaceId,
@@ -274,12 +274,42 @@ class SessionNotifier extends StateNotifier<SessionState> {
       final messagesData = await _fetchMessages(workspaceId, sessionId, serverConfig);
       if (messagesData.isEmpty) return;
 
-      final messages = _parseMessages(messagesData);
-      _addMessagesToSession(sessionId, messages);
+      final allMessages = _parseMessages(messagesData);
+      final totalCount = allMessages.length;
 
-      debugPrint('[SessionNotifier] Loaded ${messages.length} messages from server');
+      if (totalCount <= 5) {
+        // 消息少于5条，直接全部加载
+        _addMessagesToSession(sessionId, allMessages);
+        debugPrint('[SessionNotifier] Loaded all $totalCount messages');
+      } else {
+        // 先加载最近5条
+        final recentMessages = allMessages.sublist(totalCount - 5);
+        _addMessagesToSession(sessionId, recentMessages);
+        debugPrint('[SessionNotifier] Loaded recent 5 messages, loading remaining ${totalCount - 5}...');
+
+        // 后台加载剩余消息并插入到前面
+        Future.delayed(const Duration(milliseconds: 100), () {
+          final olderMessages = allMessages.sublist(0, totalCount - 5);
+          _prependMessagesToSession(sessionId, olderMessages);
+          debugPrint('[SessionNotifier] Loaded remaining ${olderMessages.length} messages');
+        });
+      }
     } catch (e) {
       debugPrint('[SessionNotifier] Failed to load message history: $e');
+    }
+  }
+
+  /// 将消息插入到 session 消息列表前面
+  void _prependMessagesToSession(String sessionId, List<ChatMessage> messages) {
+    if (messages.isEmpty) return;
+
+    final index = state.sessions.indexWhere((s) => s.id == sessionId);
+    if (index >= 0) {
+      final newSessions = [...state.sessions];
+      final session = newSessions[index];
+      // 插入到前面
+      session.messages.insertAll(0, messages);
+      state = state.copyWith(sessions: newSessions);
     }
   }
 
@@ -379,6 +409,11 @@ class SessionNotifier extends StateNotifier<SessionState> {
   /// 取消当前任务
   void cancelTask(String sessionId) {
     _connectionPool.sendCancel(sessionId);
+  }
+
+  /// 压缩上下文
+  void compactContext(String sessionId) {
+    _connectionPool.sendCompact(sessionId);
   }
 
   /// 清除 session 消息
@@ -630,6 +665,28 @@ class SessionNotifier extends StateNotifier<SessionState> {
           ),
         );
       }
+    } else if (statusType == 'compacting') {
+      // 压缩上下文中
+      _updateSession(sessionId, (s) => s.copyWith(isProcessing: true));
+      _addMessage(
+        sessionId,
+        ChatMessage(
+          type: MessageType.status,
+          content: message ?? 'Compacting context...',
+          isStreaming: true,
+        ),
+      );
+    } else if (statusType == 'compact_done') {
+      // 压缩完成
+      _removeAllStatusMessages(sessionId);
+      _addMessage(
+        sessionId,
+        ChatMessage(
+          type: MessageType.status,
+          content: message ?? 'Context compacted',
+        ),
+      );
+      _updateSession(sessionId, (s) => s.copyWith(isProcessing: false));
     } else if (statusType == 'cancelled') {
       // 先停止最后一条消息的 streaming 状态
       _updateLastMessage(sessionId, (m) => m.copyWith(isStreaming: false));
