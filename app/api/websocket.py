@@ -6,7 +6,7 @@ from typing import Optional, Set, Callable, Dict, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
-from app.api.auth import verify_ws_token
+from app.api.auth import verify_ws_token, resolve_workspace_id
 from app.config import settings
 from app.services.workspace_manager import workspace_manager
 from app.services.title_generator import generate_session_title
@@ -274,7 +274,7 @@ async def unified_websocket(
         while True:
             try:
                 data = await websocket.receive_json()
-                await handle_unified_message(conn_id, data, registered_callbacks, registered_completion_callbacks)
+                await handle_unified_message(conn_id, data, registered_callbacks, registered_completion_callbacks, token)
             except json.JSONDecodeError:
                 await manager.send_to_connection(conn_id, {
                     "event": "error",
@@ -307,13 +307,16 @@ async def heartbeat_loop_unified(conn_id: str):
 
 class MessageHandlerContext:
     """消息处理上下文"""
-    def __init__(self, conn_id: str, data: dict, registered_callbacks: dict, registered_completion_callbacks: dict):
+    def __init__(self, conn_id: str, data: dict, registered_callbacks: dict, registered_completion_callbacks: dict, token: str = ""):
         self.conn_id = conn_id
         self.data = data
         self.registered_callbacks = registered_callbacks
         self.registered_completion_callbacks = registered_completion_callbacks or {}
         self.msg_type = data.get("type")
-        self.workspace_id = data.get("workspace_id")
+        self.token = token
+        # 解析 workspace_id：如果是 "default" 则映射到用户的 token workspace
+        raw_workspace_id = data.get("workspace_id", "")
+        self.workspace_id = resolve_workspace_id(raw_workspace_id, token) if raw_workspace_id else ""
         self.session_id = data.get("session_id")
 
     @property
@@ -565,9 +568,9 @@ _MESSAGE_HANDLERS: Dict[str, Any] = {
 }
 
 
-async def handle_unified_message(conn_id: str, data: dict, registered_callbacks: dict, registered_completion_callbacks: dict = None):
+async def handle_unified_message(conn_id: str, data: dict, registered_callbacks: dict, registered_completion_callbacks: dict = None, token: str = ""):
     """处理统一连接的消息"""
-    ctx = MessageHandlerContext(conn_id, data, registered_callbacks, registered_completion_callbacks or {})
+    ctx = MessageHandlerContext(conn_id, data, registered_callbacks, registered_completion_callbacks or {}, token)
 
     # 日志记录
     session_short = ctx.session_id[:8] if ctx.session_id else 'N/A'

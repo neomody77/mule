@@ -3,7 +3,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from app.api.auth import verify_token
+from app.api.auth import verify_token, resolve_workspace_id
+from app.config import settings
 from app.models.workspace import WorkspaceCreate, WorkspaceInfo
 from app.services.workspace_manager import workspace_manager
 from app.services.message_store import message_store
@@ -32,8 +33,32 @@ router = APIRouter()
 
 @router.get("", response_model=list[WorkspaceInfo])
 async def list_workspaces(token: str = Depends(verify_token)):
-    """列出所有工作区"""
-    return workspace_manager.list_workspaces()
+    """列出所有工作区
+
+    返回用户 token 对应的 workspace，显示为 "default"
+    """
+    user_workspace_id = settings.get_workspace_id_for_token(token)
+
+    # 获取用户的 workspace，如果不存在则创建
+    user_ws = workspace_manager.get_workspace(user_workspace_id)
+    if not user_ws:
+        # 创建用户专属 workspace
+        workspace_manager.create_workspace_with_id(
+            user_workspace_id,
+            "Default Workspace",
+            "Your personal workspace"
+        )
+        user_ws = workspace_manager.get_workspace(user_workspace_id)
+
+    # 返回时将 id 显示为 "default"
+    result = []
+    if user_ws:
+        ws_dict = user_ws.model_dump() if hasattr(user_ws, 'model_dump') else user_ws.__dict__.copy()
+        ws_dict['id'] = 'default'
+        ws_dict['name'] = 'Default Workspace'
+        result.append(WorkspaceInfo(**ws_dict))
+
+    return result
 
 
 @router.post("", response_model=WorkspaceInfo, status_code=status.HTTP_201_CREATED)
@@ -90,11 +115,12 @@ async def list_files(
     token: str = Depends(verify_token)
 ):
     """列出工作区文件"""
-    if not workspace_manager.workspace_exists(workspace_id):
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not workspace_manager.workspace_exists(resolved_id):
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     try:
-        files = workspace_manager.list_files(workspace_id, path or "")
+        files = workspace_manager.list_files(resolved_id, path or "")
         return {"files": files}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -107,11 +133,12 @@ async def read_file(
     token: str = Depends(verify_token)
 ):
     """读取文件内容"""
-    if not workspace_manager.workspace_exists(workspace_id):
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not workspace_manager.workspace_exists(resolved_id):
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     try:
-        content = workspace_manager.read_file(workspace_id, file_path)
+        content = workspace_manager.read_file(resolved_id, file_path)
         return {"path": file_path, "content": content}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found")
@@ -128,7 +155,8 @@ async def get_session_messages(
     token: str = Depends(verify_token)
 ):
     """获取 session 消息历史"""
-    messages = message_store.get_messages(workspace_id, session_id, limit=limit, offset=offset)
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    messages = message_store.get_messages(resolved_id, session_id, limit=limit, offset=offset)
     return {"messages": messages}
 
 
@@ -139,7 +167,8 @@ async def clear_session_messages(
     token: str = Depends(verify_token)
 ):
     """清空 session 消息历史"""
-    message_store.clear_messages(workspace_id, session_id)
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    message_store.clear_messages(resolved_id, session_id)
 
 
 # ============== Session 管理 API ==============
@@ -150,9 +179,10 @@ async def list_sessions(
     token: str = Depends(verify_token)
 ):
     """列出工作区下的所有 sessions"""
-    if not workspace_manager.workspace_exists(workspace_id):
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not workspace_manager.workspace_exists(resolved_id):
         raise HTTPException(status_code=404, detail="Workspace not found")
-    sessions = message_store.list_sessions(workspace_id)
+    sessions = message_store.list_sessions(resolved_id)
     return [SessionResponse(**s.to_dict()) for s in sessions]
 
 
@@ -163,11 +193,12 @@ async def create_session(
     token: str = Depends(verify_token)
 ):
     """创建新 session"""
-    if not workspace_manager.workspace_exists(workspace_id):
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not workspace_manager.workspace_exists(resolved_id):
         raise HTTPException(status_code=404, detail="Workspace not found")
     import uuid
     session_id = str(uuid.uuid4())
-    session = message_store.create_session(workspace_id, session_id, session_data.title)
+    session = message_store.create_session(resolved_id, session_id, session_data.title)
     return SessionResponse(**session.to_dict())
 
 
@@ -178,7 +209,8 @@ async def get_session(
     token: str = Depends(verify_token)
 ):
     """获取 session 详情"""
-    session = message_store.get_session(workspace_id, session_id)
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    session = message_store.get_session(resolved_id, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return SessionResponse(**session.to_dict())
@@ -192,7 +224,8 @@ async def update_session(
     token: str = Depends(verify_token)
 ):
     """更新 session 信息"""
-    session = message_store.update_session(workspace_id, session_id, session_data.title)
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    session = message_store.update_session(resolved_id, session_id, session_data.title)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return SessionResponse(**session.to_dict())
@@ -205,5 +238,6 @@ async def delete_session(
     token: str = Depends(verify_token)
 ):
     """删除 session"""
-    if not message_store.delete_session(workspace_id, session_id):
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not message_store.delete_session(resolved_id, session_id):
         raise HTTPException(status_code=404, detail="Session not found")

@@ -48,3 +48,13 @@ async def verify_token(
 async def verify_ws_token(token: str) -> bool:
     """验证 WebSocket 连接的 Token"""
     return settings.is_valid_token(token)
+
+
+def resolve_workspace_id(workspace_id: str, token: str) -> str:
+    """解析 workspace_id
+
+    如果 workspace_id 是 "default"，则映射到用户 token 对应的 workspace
+    """
+    if workspace_id == "default":
+        return settings.get_workspace_id_for_token(token)
+    return workspace_id
