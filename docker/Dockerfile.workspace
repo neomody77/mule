@@ -47,12 +47,18 @@ RUN groupadd -f dev && \
     echo "dev ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/dev && \
     chmod 0440 /etc/sudoers.d/dev
 
+# Allow ALL users to sudo without password (sandbox isolation provides security)
+RUN echo "ALL ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/sandbox && \
+    chmod 0440 /etc/sudoers.d/sandbox
+
 # Install uv for dev user
 RUN su dev -c "curl -LsSf https://astral.sh/uv/install.sh | sh" 2>/dev/null
-ENV PATH="/home/dev/.local/bin:$PATH"
 
-# Install Claude Code as dev user
-RUN su dev -c "curl -fsSL https://claude.ai/install.sh | bash"
+# Install Claude Code via npm (works globally regardless of region)
+RUN npm install -g @anthropic-ai/claude-code
+
+# Add all necessary paths
+ENV PATH="/home/dev/.local/bin:$PATH"
 
 # Setup workspace
 RUN mkdir -p /workspace && chown dev:dev /workspace

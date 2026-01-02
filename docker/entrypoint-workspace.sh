@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Ensure PATH includes uv and npm global binaries
+export PATH="/home/dev/.local/bin:/usr/local/bin:$PATH"
+
 # Sync UID/GID with host user (only run if we're root)
 if [ "$(id -u)" = "0" ]; then
     if [ -n "$HOST_UID" ] && [ "$HOST_UID" != "1000" ]; then

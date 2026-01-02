@@ -122,6 +122,60 @@ class ApiService {
     return response.data['content'];
   }
 
+  // ==================== Session API ====================
+
+  /// 列出工作区下的所有 sessions
+  Future<List<Map<String, dynamic>>> listSessions(String workspaceId) async {
+    final response = await _dio.get(
+      '$_baseUrl/api/workspaces/$workspaceId/sessions',
+    );
+    final List<dynamic> sessions = response.data;
+    return sessions.cast<Map<String, dynamic>>();
+  }
+
+  /// 创建新 session
+  Future<Map<String, dynamic>> createSession(
+    String workspaceId, {
+    String? title,
+  }) async {
+    final response = await _dio.post(
+      '$_baseUrl/api/workspaces/$workspaceId/sessions',
+      data: {'title': title},
+    );
+    return response.data;
+  }
+
+  /// 获取 session 详情
+  Future<Map<String, dynamic>> getSession(
+    String workspaceId,
+    String sessionId,
+  ) async {
+    final response = await _dio.get(
+      '$_baseUrl/api/workspaces/$workspaceId/sessions/$sessionId',
+    );
+    return response.data;
+  }
+
+  /// 更新 session
+  Future<Map<String, dynamic>> updateSession(
+    String workspaceId,
+    String sessionId, {
+    String? title,
+  }) async {
+    final response = await _dio.patch(
+      '$_baseUrl/api/workspaces/$workspaceId/sessions/$sessionId',
+      data: {'title': title},
+    );
+    return response.data;
+  }
+
+  /// 删除 session
+  Future<void> deleteSession(String workspaceId, String sessionId) async {
+    await _dio.delete(
+      '$_baseUrl/api/workspaces/$workspaceId/sessions/$sessionId',
+    );
+  }
+
   // ==================== Session 消息 API ====================
 
   /// 获取 session 消息历史

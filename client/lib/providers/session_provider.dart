@@ -82,7 +82,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     }
   }
 
-  /// 加载保存的 sessions
+  /// 加载保存的 sessions（本地缓存）
   Future<void> load() async {
     state = state.copyWith(isLoading: true);
     try {
@@ -96,6 +96,77 @@ class SessionNotifier extends StateNotifier<SessionState> {
       }
     } catch (e) {
       state = state.copyWith(isLoading: false);
+    }
+  }
+
+  /// 从服务器同步指定 workspace 的 sessions
+  Future<void> syncSessionsFromServer(
+    ServerConfig serverConfig,
+    String workspaceId,
+    String workspaceName,
+  ) async {
+    debugPrint('[SessionNotifier] syncSessionsFromServer: workspace=$workspaceId');
+    try {
+      final dio = Dio();
+      dio.options.headers['Authorization'] = 'Bearer ${serverConfig.token}';
+      dio.options.headers['X-API-Token'] = serverConfig.token;
+
+      final url = '${serverConfig.httpBaseUrl}/api/workspaces/$workspaceId/sessions';
+      debugPrint('[SessionNotifier] Fetching sessions from: $url');
+
+      final response = await dio.get(url);
+
+      final List<dynamic> serverSessions = response.data;
+      debugPrint('[SessionNotifier] Fetched ${serverSessions.length} sessions from server');
+
+      // 获取当前该 workspace 的本地 sessions
+      final localSessions = state.sessions
+          .where((s) => s.serverId == serverConfig.id && s.workspaceId == workspaceId)
+          .toList();
+      final localSessionIds = localSessions.map((s) => s.id).toSet();
+
+      // 合并服务器 sessions
+      final newSessions = <ChatSession>[];
+      for (final serverSession in serverSessions) {
+        final sessionId = serverSession['id'] as String;
+        final title = serverSession['title'] as String?;
+        final createdAt = serverSession['created_at'] as String?;
+        final updatedAt = serverSession['updated_at'] as String?;
+
+        if (localSessionIds.contains(sessionId)) {
+          // 本地已有，更新标题（如果服务端有标题）
+          final localSession = localSessions.firstWhere((s) => s.id == sessionId);
+          if (title != null && title.isNotEmpty && localSession.name != title) {
+            localSession.name = title;
+          }
+          newSessions.add(localSession);
+          localSessionIds.remove(sessionId);
+        } else {
+          // 本地没有，创建新的
+          newSessions.add(ChatSession(
+            id: sessionId,
+            serverId: serverConfig.id,
+            workspaceId: workspaceId,
+            workspaceName: workspaceName,
+            // 如果没有 title，使用 session ID 的前 8 位
+            name: (title != null && title.isNotEmpty) ? title : sessionId.substring(0, 8),
+            createdAt: createdAt != null ? DateTime.tryParse(createdAt) : null,
+          ));
+        }
+      }
+
+      // 保留不属于此 workspace 的 sessions
+      final otherSessions = state.sessions
+          .where((s) => !(s.serverId == serverConfig.id && s.workspaceId == workspaceId))
+          .toList();
+
+      // 按更新时间排序（新的在前）
+      newSessions.sort((a, b) => (b.createdAt ?? DateTime.now()).compareTo(a.createdAt ?? DateTime.now()));
+
+      state = state.copyWith(sessions: [...otherSessions, ...newSessions]);
+      await _save();
+    } catch (e) {
+      debugPrint('[SessionNotifier] Failed to sync sessions from server: $e');
     }
   }
 
@@ -116,12 +187,14 @@ class SessionNotifier extends StateNotifier<SessionState> {
     required String workspaceName,
     String? name,
   }) async {
+    final sessionId = const Uuid().v4();
     final session = ChatSession(
-      id: const Uuid().v4(),
+      id: sessionId,
       serverId: serverId,
       workspaceId: workspaceId,
       workspaceName: workspaceName,
-      name: name ?? 'New Session',
+      // 如果没有提供名字，使用 session ID 的前 8 位
+      name: name ?? sessionId.substring(0, 8),
     );
 
     state = state.copyWith(sessions: [...state.sessions, session]);
@@ -331,6 +404,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     'prompt_queued': _handlePromptQueued,
     'prompt_dequeued': _handlePromptDequeued,
     'session_title_updated': _handleSessionTitleUpdated,
+    'user_message': _handleUserMessage,
   };
 
   // 标记未读的事件类型
@@ -578,6 +652,31 @@ class SessionNotifier extends StateNotifier<SessionState> {
       _updateSession(sessionId, (s) => s.copyWith(name: title));
       _save();
     }
+  }
+
+  /// 处理其他客户端发送的用户消息
+  void _handleUserMessage(String sessionId, Map<String, dynamic> data) {
+    final content = data['content'] as String?;
+    if (content == null || content.isEmpty) return;
+
+    final session = state.getSession(sessionId);
+    if (session == null) return;
+
+    // 检查是否已经有这条消息（发送者本地已添加）
+    // 如果最后一条消息是用户消息且内容相同，说明是自己发送的，跳过
+    if (session.messages.isNotEmpty) {
+      final lastMsg = session.messages.last;
+      if (lastMsg.type == MessageType.user && lastMsg.content == content) {
+        debugPrint('[SessionNotifier] Skipping duplicate user message');
+        return;
+      }
+    }
+
+    debugPrint('[SessionNotifier] Received user message from other client: $content');
+    _addMessage(sessionId, ChatMessage(
+      type: MessageType.user,
+      content: content,
+    ));
   }
 
   /// 处理 session 连接状态变化

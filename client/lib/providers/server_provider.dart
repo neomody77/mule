@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -61,12 +62,15 @@ class ServerNotifier extends StateNotifier<ServerState> {
 
   /// 加载保存的服务器配置
   Future<void> load() async {
+    debugPrint('[ServerNotifier] load() called');
     state = state.copyWith(isLoading: true);
     try {
       final prefs = await SharedPreferences.getInstance();
       final json = prefs.getString(_storageKey);
+      debugPrint('[ServerNotifier] load() json: ${json != null ? "${json.length} chars" : "null"}');
       if (json != null) {
         final servers = ServerConfigList.decode(json);
+        debugPrint('[ServerNotifier] load() decoded ${servers.length} servers');
         state = state.copyWith(servers: servers, isLoading: false);
         // 刷新所有服务器状态
         await refreshAllServers();
@@ -74,6 +78,7 @@ class ServerNotifier extends StateNotifier<ServerState> {
         state = state.copyWith(isLoading: false);
       }
     } catch (e) {
+      debugPrint('[ServerNotifier] load() error: $e');
       state = state.copyWith(isLoading: false);
     }
   }
@@ -141,16 +146,28 @@ class ServerNotifier extends StateNotifier<ServerState> {
     await _save();
   }
 
-  /// 刷新所有服务器
-  Future<void> refreshAllServers() async {
-    final futures = state.servers.map((s) => refreshServer(s.id));
-    await Future.wait(futures);
+  /// 刷新所有服务器，返回所有在线服务器及其 workspaces
+  Future<Map<ServerConfig, List<WorkspaceInfo>>> refreshAllServers() async {
+    debugPrint('[ServerNotifier] refreshAllServers: ${state.servers.length} servers');
+    final results = <ServerConfig, List<WorkspaceInfo>>{};
+
+    await Future.wait(state.servers.map((server) async {
+      debugPrint('[ServerNotifier] Refreshing server: ${server.name}');
+      final workspaces = await refreshServer(server.id);
+      debugPrint('[ServerNotifier] Server ${server.name}: ${workspaces.length} workspaces');
+      if (workspaces.isNotEmpty) {
+        results[server] = workspaces;
+      }
+    }));
+
+    debugPrint('[ServerNotifier] refreshAllServers done: ${results.length} online servers');
+    return results;
   }
 
-  /// 刷新指定服务器
-  Future<void> refreshServer(String serverId) async {
+  /// 刷新指定服务器，返回 workspaces 列表
+  Future<List<WorkspaceInfo>> refreshServer(String serverId) async {
     final server = state.getServer(serverId);
-    if (server == null) return;
+    if (server == null) return [];
 
     try {
       final workspaces = await _fetchWorkspaces(server);
@@ -160,6 +177,7 @@ class ServerNotifier extends StateNotifier<ServerState> {
         ..[serverId] = true;
 
       state = state.copyWith(workspaces: newWorkspaces, serverStatus: newStatus);
+      return workspaces;
     } catch (e) {
       final newStatus = Map<String, bool>.from(state.serverStatus)
         ..[serverId] = false;
@@ -167,6 +185,7 @@ class ServerNotifier extends StateNotifier<ServerState> {
         ..[serverId] = [];
 
       state = state.copyWith(workspaces: newWorkspaces, serverStatus: newStatus);
+      return [];
     }
   }
 

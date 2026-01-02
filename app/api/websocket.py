@@ -420,6 +420,12 @@ async def _handle_prompt(ctx: MessageHandlerContext) -> bool:
 
     message_store.append_user_message(ctx.workspace_id, ctx.session_id, content)
 
+    # 广播用户消息给所有订阅该 session 的客户端
+    await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+        "event": "user_message",
+        "data": {"content": content}
+    })
+
     current_task = task_manager.get_current_task(ctx.task_key)
     if current_task and current_task.status == TaskStatus.RUNNING:
         return await _queue_prompt(ctx, content)

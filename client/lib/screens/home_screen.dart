@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -23,19 +24,41 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    // ignore: avoid_print
+    print('>>>>>> [HomeScreen] initState called <<<<<<');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ignore: avoid_print
+      print('>>>>>> [HomeScreen] postFrameCallback started <<<<<<');
+      _initAsync();
+    });
+  }
+
+  Future<void> _initAsync() async {
+    try {
+      debugPrint('[HomeScreen] _initAsync started');
+
       // 检查是否有自动连接的服务器
       await _handleAutoConnect();
 
-      // 刷新服务器列表
-      await ref.read(serverProvider.notifier).refreshAllServers();
+      // 刷新服务器列表，获取返回的 workspaces
+      debugPrint('[HomeScreen] Calling refreshAllServers...');
+      final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
+      debugPrint('[HomeScreen] refreshAllServers returned ${serverWorkspaces.length} servers with workspaces');
+
+      // 同步所有 workspace 的 sessions（使用返回值，避免时序问题）
+      debugPrint('[HomeScreen] Calling _syncAllSessions...');
+      await _syncAllSessions(serverWorkspaces);
+      debugPrint('[HomeScreen] _syncAllSessions completed');
 
       // App 启动时，只要有 server 就建立 WebSocket 连接
       final servers = ref.read(serverProvider).servers;
       if (servers.isNotEmpty) {
         ref.read(sessionProvider.notifier).connectAllServers(servers);
       }
-    });
+    } catch (e, stack) {
+      debugPrint('[HomeScreen] _initAsync error: $e');
+      debugPrint('[HomeScreen] Stack: $stack');
+    }
   }
 
   /// 处理自动连接
@@ -97,12 +120,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       orElse: () => workspaces.first,
     );
 
-    // 创建新 session
+    // 创建新 session (不传 name，让 provider 使用 ID 前 8 位)
     final session = await ref.read(sessionProvider.notifier).createSession(
       serverId: serverToUse.id,
       workspaceId: defaultWorkspace.id,
       workspaceName: defaultWorkspace.name,
-      name: 'New Session',
     );
 
     // 连接服务器
@@ -124,6 +146,40 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
       if (mounted) {
         ref.read(sessionProvider.notifier).setActiveSession(null);
+      }
+    }
+  }
+
+  /// 同步所有 workspace 的 sessions
+  /// [serverWorkspaces] 是从 refreshAllServers 返回的结果，避免时序问题
+  Future<void> _syncAllSessions([Map<ServerConfig, List<WorkspaceInfo>>? serverWorkspaces]) async {
+    final sessionNotifier = ref.read(sessionProvider.notifier);
+    debugPrint('[HomeScreen] _syncAllSessions: serverWorkspaces=${serverWorkspaces?.length ?? "null"}');
+
+    // 如果有传入的 serverWorkspaces，直接使用（避免时序问题）
+    if (serverWorkspaces != null && serverWorkspaces.isNotEmpty) {
+      debugPrint('[HomeScreen] Using passed serverWorkspaces');
+      for (final entry in serverWorkspaces.entries) {
+        final server = entry.key;
+        final workspaces = entry.value;
+        debugPrint('[HomeScreen] Syncing ${workspaces.length} workspaces for ${server.name}');
+        for (final ws in workspaces) {
+          debugPrint('[HomeScreen] Syncing workspace ${ws.id}');
+          await sessionNotifier.syncSessionsFromServer(server, ws.id, ws.name);
+        }
+      }
+      return;
+    }
+
+    // 否则从 state 读取（用于手动刷新场景）
+    debugPrint('[HomeScreen] Using state.servers');
+    final serverState = ref.read(serverProvider);
+    for (final server in serverState.servers) {
+      final workspaces = serverState.getWorkspaces(server.id);
+      if (workspaces.isEmpty) continue;
+
+      for (final ws in workspaces) {
+        await sessionNotifier.syncSessionsFromServer(server, ws.id, ws.name);
       }
     }
   }
@@ -221,12 +277,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: () {
-                ref.read(serverProvider.notifier).refreshAllServers();
+              onPressed: () async {
+                final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
+                await _syncAllSessions(serverWorkspaces);
               },
               tooltip: 'Refresh',
-            ).withCommand('home.refresh', onTap: () {
-              ref.read(serverProvider.notifier).refreshAllServers();
+            ).withCommand('home.refresh', onTap: () async {
+              final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
+              await _syncAllSessions(serverWorkspaces);
             }),
             IconButton(
               icon: const Icon(Icons.settings_outlined),
@@ -336,7 +394,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return RefreshIndicator(
       onRefresh: () async {
-        await ref.read(serverProvider.notifier).refreshAllServers();
+        final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
+        // 同步所有 workspace 的 sessions
+        await _syncAllSessions(serverWorkspaces);
       },
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
@@ -1149,8 +1209,9 @@ class _NewSessionSheetState extends ConsumerState<_NewSessionSheet> {
       serverId: _selectedServer!.id,
       workspaceId: _selectedWorkspace!.id,
       workspaceName: _selectedWorkspace!.name,
+      // 如果用户没有输入名字，传 null 让 provider 使用 ID 前 8 位
       name: _nameController.text.trim().isEmpty
-          ? 'New Session'
+          ? null
           : _nameController.text.trim(),
     );
 

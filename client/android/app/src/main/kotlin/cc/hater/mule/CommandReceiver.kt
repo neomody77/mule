@@ -1,4 +1,4 @@
-package com.claudecode.claude_code_remote
+package cc.hater.mule
 
 import android.content.BroadcastReceiver
 import android.content.Context

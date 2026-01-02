@@ -20,6 +20,9 @@ ServerConfig? getPendingAutoConnectServer() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ignore: avoid_print
+  print('====== Mule App Starting - Build v20260102_1545 ======');
+
   // 初始化远程命令服务
   RemoteCommandService.instance.init();
 

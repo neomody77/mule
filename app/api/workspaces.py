@@ -1,11 +1,31 @@
 """工作区管理 REST API"""
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from app.api.auth import verify_token
 from app.models.workspace import WorkspaceCreate, WorkspaceInfo
 from app.services.workspace_manager import workspace_manager
 from app.services.message_store import message_store
+
+
+class SessionResponse(BaseModel):
+    """Session 响应模型"""
+    id: str
+    workspace_id: str
+    title: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class SessionCreate(BaseModel):
+    """创建 Session 请求"""
+    title: Optional[str] = None
+
+
+class SessionUpdate(BaseModel):
+    """更新 Session 请求"""
+    title: Optional[str] = None
 
 router = APIRouter()
 
@@ -120,3 +140,70 @@ async def clear_session_messages(
 ):
     """清空 session 消息历史"""
     message_store.clear_messages(workspace_id, session_id)
+
+
+# ============== Session 管理 API ==============
+
+@router.get("/{workspace_id}/sessions", response_model=list[SessionResponse])
+async def list_sessions(
+    workspace_id: str,
+    token: str = Depends(verify_token)
+):
+    """列出工作区下的所有 sessions"""
+    if not workspace_manager.workspace_exists(workspace_id):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    sessions = message_store.list_sessions(workspace_id)
+    return [SessionResponse(**s.to_dict()) for s in sessions]
+
+
+@router.post("/{workspace_id}/sessions", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+async def create_session(
+    workspace_id: str,
+    session_data: SessionCreate,
+    token: str = Depends(verify_token)
+):
+    """创建新 session"""
+    if not workspace_manager.workspace_exists(workspace_id):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    import uuid
+    session_id = str(uuid.uuid4())
+    session = message_store.create_session(workspace_id, session_id, session_data.title)
+    return SessionResponse(**session.to_dict())
+
+
+@router.get("/{workspace_id}/sessions/{session_id}", response_model=SessionResponse)
+async def get_session(
+    workspace_id: str,
+    session_id: str,
+    token: str = Depends(verify_token)
+):
+    """获取 session 详情"""
+    session = message_store.get_session(workspace_id, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionResponse(**session.to_dict())
+
+
+@router.patch("/{workspace_id}/sessions/{session_id}", response_model=SessionResponse)
+async def update_session(
+    workspace_id: str,
+    session_id: str,
+    session_data: SessionUpdate,
+    token: str = Depends(verify_token)
+):
+    """更新 session 信息"""
+    session = message_store.update_session(workspace_id, session_id, session_data.title)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionResponse(**session.to_dict())
+
+
+@router.delete("/{workspace_id}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    workspace_id: str,
+    session_id: str,
+    token: str = Depends(verify_token)
+):
+    """删除 session"""
+    if not message_store.delete_session(workspace_id, session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
