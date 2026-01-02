@@ -11,13 +11,12 @@ from setuptools import setup
 setup(
     name="mule-cli",
     version="0.1.0",
-    description="Mule CLI - Claude Code 包装器，支持远程同步",
+    description="Mule CLI - 通过后端 WebSocket 执行 Claude Agent",
     author="Mule Team",
     packages=["cli"],
     package_dir={"cli": "."},
     python_requires=">=3.10",
     install_requires=[
-        "claude-agent-sdk>=0.1.0",
         "websockets>=12.0",
     ],
     entry_points={
