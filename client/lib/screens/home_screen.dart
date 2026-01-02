@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../config/theme.dart';
 import '../main.dart' show getPendingAutoConnectServer;
@@ -8,9 +9,8 @@ import '../models/chat_session.dart';
 import '../models/server_config.dart';
 import '../models/workspace.dart';
 import '../providers/providers.dart';
+import '../router.dart';
 import '../widgets/command_target.dart';
-import 'session_screen.dart';
-import 'settings_screen.dart';
 
 /// 主页 - Workspace 卡片视图
 class HomeScreen extends ConsumerStatefulWidget {
@@ -134,19 +134,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ref.read(sessionProvider.notifier).setActiveSession(session.id);
 
     if (mounted) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => SessionScreen(
-            session: session,
-            server: serverToUse,
-          ),
-        ),
-      );
-
-      if (mounted) {
-        ref.read(sessionProvider.notifier).setActiveSession(null);
-      }
+      context.go(AppRoutes.sessionPath(
+        serverToUse.id,
+        defaultWorkspace.id,
+        session.id,
+      ));
     }
   }
 
@@ -220,10 +212,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           FilledButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
+              context.push(AppRoutes.settings);
             },
             child: const Text('Go to Settings'),
           ),
@@ -241,27 +230,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  void _openSession(ChatSession session) async {
+  void _openSession(ChatSession session) {
     final serverState = ref.read(serverProvider);
     final server = serverState.getServer(session.serverId);
     if (server == null) return;
 
     ref.read(sessionProvider.notifier).setActiveSession(session.id);
 
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => SessionScreen(
-          session: session,
-          server: server,
-        ),
-      ),
-    );
-
-    // 离开 session 页面后，清除活跃 session（后续消息将标记为未读）
-    if (mounted) {
-      ref.read(sessionProvider.notifier).setActiveSession(null);
-    }
+    context.go(AppRoutes.sessionPath(
+      server.id,
+      session.workspaceId,
+      session.id,
+    ));
   }
 
   @override
@@ -288,18 +268,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             }),
             IconButton(
               icon: const Icon(Icons.settings_outlined),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                );
-              },
+              onPressed: () => context.push(AppRoutes.settings),
               tooltip: 'Settings',
             ).withCommand('home.settings', onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
+              context.push(AppRoutes.settings);
             }),
           ],
         ),
@@ -339,12 +311,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
-            },
+            onPressed: () => context.push(AppRoutes.settings),
             icon: const Icon(Icons.add),
             label: const Text('Add Server'),
           ),
@@ -1216,25 +1183,16 @@ class _NewSessionSheetState extends ConsumerState<_NewSessionSheet> {
     );
 
     if (mounted) {
-      Navigator.pop(context);
+      Navigator.pop(context); // 关闭 bottom sheet
 
       // 设置为活跃 session
       ref.read(sessionProvider.notifier).setActiveSession(session.id);
 
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => SessionScreen(
-            session: session,
-            server: _selectedServer!,
-          ),
-        ),
-      );
-
-      // 离开 session 页面后，清除活跃 session
-      if (mounted) {
-        ref.read(sessionProvider.notifier).setActiveSession(null);
-      }
+      context.go(AppRoutes.sessionPath(
+        _selectedServer!.id,
+        _selectedWorkspace!.id,
+        session.id,
+      ));
     }
   }
 

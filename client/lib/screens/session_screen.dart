@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../config/theme.dart';
 import '../models/chat_session.dart' show ChatSession, SessionConnectionState, PendingPrompt, TodoItem, TodoStatus;
 import '../models/server_config.dart';
 import '../providers/providers.dart';
+import '../router.dart';
 import '../widgets/command_target.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/file_drawer.dart';
@@ -133,6 +135,12 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     super.dispose();
   }
 
+  void _goBack() {
+    // 清除活跃 session（后续消息将标记为未读）
+    ref.read(sessionProvider.notifier).setActiveSession(null);
+    context.go(AppRoutes.home);
+  }
+
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
@@ -213,8 +221,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
-          ).withCommand('session.back', onTap: () => Navigator.pop(context)),
+            onPressed: () => _goBack(),
+          ).withCommand('session.back', onTap: () => _goBack()),
           title: session == null
               ? const Text('Session')
               : GestureDetector(
