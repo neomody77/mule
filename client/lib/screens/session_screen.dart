@@ -225,6 +225,16 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                   ],
                 ),
           actions: [
+            // Todo 按钮 - 有任务时显示
+            if (session != null && session.todos.isNotEmpty)
+              IconButton(
+                icon: Badge(
+                  label: Text('${session.todos.where((t) => t.status != TodoStatus.completed).length}'),
+                  isLabelVisible: session.todos.any((t) => t.status != TodoStatus.completed),
+                  child: const Icon(Icons.checklist),
+                ),
+                onPressed: _showTodoSheet,
+              ),
             // 更多操作 - 使用 BottomSheet
             IconButton(
               icon: const Icon(Icons.more_vert),
@@ -525,7 +535,69 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   }
 
   void _showActionsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 拖动指示器
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: ZiaOlive.shade200,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            _buildActionTile(
+              icon: Icons.folder_outlined,
+              title: 'Files',
+              onTap: () {
+                Navigator.pop(context);
+                _openFileDrawer();
+              },
+            ),
+            const Divider(height: 1),
+            _buildActionTile(
+              icon: Icons.delete_outline,
+              title: 'Clear Messages',
+              onTap: () {
+                Navigator.pop(context);
+                _confirmClearMessages();
+              },
+            ),
+            _buildActionTile(
+              icon: Icons.edit_outlined,
+              title: 'Rename',
+              onTap: () {
+                Navigator.pop(context);
+                _showRenameDialog();
+              },
+            ),
+            _buildActionTile(
+              icon: Icons.compress,
+              title: 'Compact Context',
+              onTap: () {
+                Navigator.pop(context);
+                _compactContext();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showTodoSheet() {
     final session = ref.read(sessionProvider).getSession(_sessionId);
+    if (session == null || session.todos.isEmpty) return;
 
     showModalBottomSheet(
       context: context,
@@ -536,7 +608,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
       ),
       builder: (context) => DraggableScrollableSheet(
         initialChildSize: 0.4,
-        minChildSize: 0.25,
+        minChildSize: 0.2,
         maxChildSize: 0.8,
         expand: false,
         builder: (context, scrollController) => Column(
@@ -551,50 +623,40 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            // Todo List (如果有的话)
-            if (session != null && session.todos.isNotEmpty) ...[
-              _buildTodoList(session.todos),
-              const Divider(height: 1),
-            ],
-            // 操作菜单
-            Expanded(
-              child: ListView(
-                controller: scrollController,
+            // 标题
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
                 children: [
-                  _buildActionTile(
-                    icon: Icons.folder_outlined,
-                    title: 'Files',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _openFileDrawer();
-                    },
+                  Icon(Icons.checklist, size: 20, color: ZiaOlive.shade400),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Tasks',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: ZiaOlive.shade500,
+                    ),
                   ),
-                  const Divider(height: 1),
-                  _buildActionTile(
-                    icon: Icons.delete_outline,
-                    title: 'Clear Messages',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _confirmClearMessages();
-                    },
-                  ),
-                  _buildActionTile(
-                    icon: Icons.edit_outlined,
-                    title: 'Rename',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _showRenameDialog();
-                    },
-                  ),
-                  _buildActionTile(
-                    icon: Icons.compress,
-                    title: 'Compact Context',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _compactContext();
-                    },
+                  const Spacer(),
+                  Text(
+                    '${session.todos.where((t) => t.status == TodoStatus.completed).length}/${session.todos.length}',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: ZiaOlive.shade300,
+                    ),
                   ),
                 ],
+              ),
+            ),
+            const Divider(height: 1),
+            // Todo 列表
+            Expanded(
+              child: ListView.builder(
+                controller: scrollController,
+                padding: const EdgeInsets.all(16),
+                itemCount: session.todos.length,
+                itemBuilder: (context, index) => _buildTodoItem(session.todos[index]),
               ),
             ),
           ],
@@ -612,33 +674,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
       leading: Icon(icon, color: ZiaOlive.shade400),
       title: Text(title),
       onTap: onTap,
-    );
-  }
-
-  Widget _buildTodoList(List<TodoItem> todos) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.checklist, size: 16, color: ZiaOlive.shade400),
-              const SizedBox(width: 8),
-              Text(
-                'Tasks',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: ZiaOlive.shade400,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...todos.map((todo) => _buildTodoItem(todo)),
-        ],
-      ),
     );
   }
 
