@@ -116,11 +116,33 @@ GOOGLE_API_KEY=your_key
 ADK_MODEL=gemini-2.0-flash
 ```
 
-### Docker 隔离模式
+### Docker 隔离模式 (Linux)
 ```bash
 AGENT_BACKEND=sandbox
 # 需要先构建镜像: docker build -t mule-workspace:latest -f docker/Dockerfile.workspace .
 ```
+
+Docker 隔离模式在 Linux 主机上会自动使用宿主机的 Claude 登录信息：
+
+**认证文件挂载策略：**
+- `~/.claude/.credentials.json` → 只读挂载到容器（OAuth token，自动同步更新）
+- `~/.claude.json` → 复制到容器专属目录（Claude 需要写入）
+- `~/.claude/` 目录 → 每个容器独立副本（避免 projects/ 冲突）
+
+**前置条件：**
+1. 宿主机已通过 `claude` 命令登录（存在 `~/.claude/.credentials.json`）
+2. 容器以宿主机用户身份运行（自动处理文件权限）
+
+**工作原理：**
+```
+宿主机                          容器
+~/.claude/.credentials.json  →  /home/user/.claude/.credentials.json (只读)
+~/.claude.json               →  /home/user/.claude.json (复制)
+data/containers/{id}/.claude →  /home/user/.claude/ (可读写)
+workspaces/{id}              →  /workspace
+```
+
+这样容器内的 Claude Code 可以直接使用宿主机的登录状态，无需在容器内重新登录。
 
 ## WebSocket 协议
 
