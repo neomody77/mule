@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     # 加密密钥 - 用于加密连接信息
     connect_secret: str = "mule-secret-key-change-me"
 
+    # ==================== Clerk 认证配置 ====================
+    # 认证提供者: token（默认）或 clerk
+    auth_provider: str = "token"
+
+    # Clerk JWKS URL（仅当 auth_provider=clerk 时需要）
+    # 格式: https://your-clerk-frontend-api.clerk.accounts.dev/.well-known/jwks.json
+    clerk_jwks_url: Optional[str] = None
+
+    @property
+    def use_clerk_auth(self) -> bool:
+        """是否使用 Clerk 认证"""
+        return self.auth_provider == "clerk" and self.clerk_jwks_url is not None
+
     @property
     def token_list(self) -> list[str]:
         """获取 token 列表"""

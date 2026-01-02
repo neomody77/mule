@@ -18,3 +18,7 @@ python-multipart>=0.0.6
 
 # 异步支持
 aiofiles>=23.2.0
+
+# Clerk 认证 (可选)
+fastapi-clerk-auth>=0.3.0
+python-jose[cryptography]>=3.3.0  # WebSocket token 验证

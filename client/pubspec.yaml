@@ -48,6 +48,9 @@ dependencies:
   flutter_riverpod: ^2.6.1
   go_router: ^17.0.1
 
+  # Clerk 认证 (可选)
+  clerk_flutter: ^0.0.10-beta
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

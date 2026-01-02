@@ -1,3 +1,6 @@
+/// 认证模式
+enum AuthMode { token, clerk }
+
 /// 应用配置
 class AppConfig {
   /// 服务器主机地址
@@ -10,8 +13,22 @@ class AppConfig {
   /// 是否使用 HTTPS/WSS
   static bool useSecure = false;
 
-  /// API Token
+  /// API Token（Token 模式使用）
   static String apiToken = 'test-token-123';
+
+  // ==================== Clerk 配置 ====================
+
+  /// 认证模式: token（默认）或 clerk
+  static AuthMode authMode = AuthMode.token;
+
+  /// Clerk Publishable Key（从 Clerk Dashboard 获取）
+  /// 仅当 authMode = clerk 时需要配置
+  static String? clerkPublishableKey;
+
+  /// 是否使用 Clerk 认证
+  static bool get useClerkAuth => authMode == AuthMode.clerk;
+
+  // ==================== URL 生成 ====================
 
   /// 获取完整服务器地址 (host:port)
   static String get serverAddress => '$serverHost:$serverPort';
@@ -39,10 +56,16 @@ class AppConfig {
     int? port,
     bool? secure,
     String? token,
+    AuthMode? authMode,
+    String? clerkPublishableKey,
   }) {
-    if (host != null) serverHost = host;
-    if (port != null) serverPort = port;
-    if (secure != null) useSecure = secure;
-    if (token != null) apiToken = token;
+    if (host != null) AppConfig.serverHost = host;
+    if (port != null) AppConfig.serverPort = port;
+    if (secure != null) AppConfig.useSecure = secure;
+    if (token != null) AppConfig.apiToken = token;
+    if (authMode != null) AppConfig.authMode = authMode;
+    if (clerkPublishableKey != null) {
+      AppConfig.clerkPublishableKey = clerkPublishableKey;
+    }
   }
 }
