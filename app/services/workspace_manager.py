@@ -62,6 +62,10 @@ class WorkspaceManager:
 
         workspace_path.mkdir(parents=True)
 
+        # 创建 .claude/plans 目录，用于存储 plan 文件
+        plans_dir = workspace_path / ".claude" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
         # 创建 .claudeignore 文件，忽略系统文件
         claudeignore_path = workspace_path / ".claudeignore"
         claudeignore_path.write_text(".workspace_meta.json\n.claudeignore\n")
@@ -103,6 +107,10 @@ class WorkspaceManager:
                 return existing
 
         workspace_path.mkdir(parents=True, exist_ok=True)
+
+        # 创建 .claude/plans 目录，用于存储 plan 文件
+        plans_dir = workspace_path / ".claude" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
 
         # 创建 .claudeignore 文件
         claudeignore_path = workspace_path / ".claudeignore"
