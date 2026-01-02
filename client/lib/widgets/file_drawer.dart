@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../config/theme.dart';
 import '../models/file_node.dart';
 import '../models/server_config.dart';
+import '../router.dart';
 import '../services/api_service.dart';
-import '../screens/file_viewer_screen.dart';
 
 /// 文件树抽屉组件
 class FileDrawer extends StatefulWidget {
@@ -75,17 +76,12 @@ class _FileDrawerState extends State<FileDrawer> {
   }
 
   void _openFile(FileNode file) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => FileViewerScreen(
-          server: widget.server,
-          workspaceId: widget.workspaceId,
-          filePath: file.path,
-          fileName: file.name,
-        ),
-      ),
-    );
+    context.push(AppRoutes.fileViewerPath(
+      widget.server.id,
+      widget.workspaceId,
+      file.path,
+      file.name,
+    ));
   }
 
   List<String> get _pathParts {

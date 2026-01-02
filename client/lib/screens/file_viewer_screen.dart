@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../config/theme.dart';
 import '../models/server_config.dart';
+import '../router.dart';
 import '../services/api_service.dart';
 
 /// 文件查看器页面
@@ -93,7 +95,13 @@ class _FileViewerScreenState extends ConsumerState<FileViewerScreen> {
         title: Text(widget.fileName),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.home);
+            }
+          },
         ),
         actions: [
           // 刷新按钮

@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../config/theme.dart';
 import '../models/file_node.dart';
 import '../models/server_config.dart';
+import '../router.dart';
 import '../services/api_service.dart';
-import 'file_viewer_screen.dart';
 
 /// 文件管理器页面
 class FileManagerScreen extends ConsumerStatefulWidget {
@@ -86,17 +87,12 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
   }
 
   void _openFile(FileNode file) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => FileViewerScreen(
-          server: widget.server,
-          workspaceId: widget.workspaceId,
-          filePath: file.path,
-          fileName: file.name,
-        ),
-      ),
-    );
+    context.push(AppRoutes.fileViewerPath(
+      widget.server.id,
+      widget.workspaceId,
+      file.path,
+      file.name,
+    ));
   }
 
   List<String> get _pathParts {
@@ -113,7 +109,13 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
         title: const Text('Files'),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.home);
+            }
+          },
         ),
       ),
       body: Column(
