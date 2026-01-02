@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'config/theme.dart';
 import 'models/chat_session.dart';
 import 'models/server_config.dart';
 import 'providers/providers.dart';
@@ -61,22 +62,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           final workspaceId = state.pathParameters['workspaceId']!;
           final sessionId = state.pathParameters['sessionId']!;
 
-          // 从 provider 获取 session 和 server
-          final container = ProviderScope.containerOf(context);
-          final serverState = container.read(serverProvider);
-          final sessionState = container.read(sessionProvider);
-
-          final server = serverState.getServer(serverId);
-          final session = sessionState.getSession(sessionId);
-
-          // 如果找不到，返回首页
-          if (server == null || session == null) {
-            return const HomeScreen();
-          }
-
-          return SessionScreen(
-            session: session,
-            server: server,
+          return _SessionLoader(
+            serverId: serverId,
+            workspaceId: workspaceId,
+            sessionId: sessionId,
           );
         },
       ),
@@ -153,3 +142,135 @@ final routerProvider = Provider<GoRouter>((ref) {
     ),
   );
 });
+
+/// Session 加载器 - 等待数据加载后显示 SessionScreen
+class _SessionLoader extends ConsumerStatefulWidget {
+  final String serverId;
+  final String workspaceId;
+  final String sessionId;
+
+  const _SessionLoader({
+    required this.serverId,
+    required this.workspaceId,
+    required this.sessionId,
+  });
+
+  @override
+  ConsumerState<_SessionLoader> createState() => _SessionLoaderState();
+}
+
+class _SessionLoaderState extends ConsumerState<_SessionLoader> {
+  bool _initialized = false;
+  bool _notFound = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initData();
+  }
+
+  Future<void> _initData() async {
+    // 等待 provider 初始化完成
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    if (!mounted) return;
+
+    // 检查数据是否已加载
+    final serverState = ref.read(serverProvider);
+    final sessionState = ref.read(sessionProvider);
+
+    final server = serverState.getServer(widget.serverId);
+    final session = sessionState.getSession(widget.sessionId);
+
+    if (server != null && session != null) {
+      setState(() => _initialized = true);
+      return;
+    }
+
+    // 如果没有数据，尝试等待更长时间（数据可能正在从存储加载）
+    for (var i = 0; i < 20; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (!mounted) return;
+
+      final serverState = ref.read(serverProvider);
+      final sessionState = ref.read(sessionProvider);
+
+      final server = serverState.getServer(widget.serverId);
+      final session = sessionState.getSession(widget.sessionId);
+
+      if (server != null && session != null) {
+        setState(() => _initialized = true);
+        return;
+      }
+    }
+
+    // 超时，跳转到首页
+    if (mounted) {
+      setState(() => _notFound = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_notFound) {
+      // 数据加载超时，显示错误并提供返回首页按钮
+      return Scaffold(
+        appBar: AppBar(title: const Text('Session Not Found')),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 64, color: ZiaOlive.shade200),
+              const SizedBox(height: 16),
+              const Text('Session not found or data not loaded'),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: () => context.go(AppRoutes.home),
+                child: const Text('Go Home'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_initialized) {
+      // 显示加载中
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Loading session...',
+                style: TextStyle(color: ZiaOlive.shade300),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 数据已加载，显示 SessionScreen
+    final serverState = ref.watch(serverProvider);
+    final sessionState = ref.watch(sessionProvider);
+
+    final server = serverState.getServer(widget.serverId);
+    final session = sessionState.getSession(widget.sessionId);
+
+    if (server == null || session == null) {
+      // 数据在加载后又丢失了
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go(AppRoutes.home);
+      });
+      return const SizedBox.shrink();
+    }
+
+    return SessionScreen(
+      session: session,
+      server: server,
+    );
+  }
+}
