@@ -19,8 +19,13 @@ class ApiService {
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {
         debugPrint('[ApiService] Request: ${options.method} ${options.uri}');
-        options.headers['Authorization'] = 'Bearer ${AppConfig.apiToken}';
-        options.headers['X-API-Token'] = AppConfig.apiToken;
+        // 只在没有设置时才使用默认 token
+        if (!options.headers.containsKey('Authorization')) {
+          options.headers['Authorization'] = 'Bearer ${AppConfig.apiToken}';
+        }
+        if (!options.headers.containsKey('X-API-Token')) {
+          options.headers['X-API-Token'] = AppConfig.apiToken;
+        }
         return handler.next(options);
       },
       onResponse: (response, handler) {
