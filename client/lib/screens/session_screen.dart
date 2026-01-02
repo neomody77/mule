@@ -8,7 +8,7 @@ import '../models/server_config.dart';
 import '../providers/providers.dart';
 import '../widgets/command_target.dart';
 import '../widgets/message_bubble.dart';
-import 'file_manager_screen.dart';
+import '../widgets/file_drawer.dart';
 
 /// Session 聊天界面
 class SessionScreen extends ConsumerStatefulWidget {
@@ -204,6 +204,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     return ScreenScope(
       screenId: 'session',
       child: Scaffold(
+        endDrawer: FileDrawer(
+          server: widget.server,
+          workspaceId: widget.session.workspaceId,
+        ),
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
@@ -563,7 +567,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   void _handleMenuAction(String action) {
     switch (action) {
       case 'files':
-        _openFileManager();
+        _openFileDrawer();
         break;
       case 'clear':
         _confirmClearMessages();
@@ -577,16 +581,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     }
   }
 
-  void _openFileManager() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => FileManagerScreen(
-          server: widget.server,
-          workspaceId: widget.session.workspaceId,
-        ),
-      ),
-    );
+  void _openFileDrawer() {
+    Scaffold.of(context).openEndDrawer();
   }
 
   void _compactContext() {
