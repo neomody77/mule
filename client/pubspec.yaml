@@ -1,5 +1,5 @@
-name: claude_code_remote
-description: "移动端 Claude Code 远程编码平台"
+name: mule
+description: "Mule - 移动端远程编码平台"
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -47,6 +47,9 @@ dependencies:
   # 状态管理 - Riverpod
   flutter_riverpod: ^2.6.1
   go_router: ^17.0.1
+
+  # Clerk 认证 (可选)
+  clerk_flutter: ^0.0.10-beta
 
 dev_dependencies:
   flutter_test:

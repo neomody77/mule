@@ -4,12 +4,19 @@ import '../config/app_config.dart';
 import '../models/server_config.dart';
 import '../models/workspace.dart';
 import '../models/file_node.dart';
+import 'clerk_auth_service.dart';
+
+/// Token 获取回调类型
+typedef TokenGetter = Future<String?> Function();
 
 /// API 服务
 class ApiService {
   late final Dio _dio;
 
-  ApiService() {
+  /// 自定义 token 获取器（用于 Clerk 模式）
+  TokenGetter? _tokenGetter;
+
+  ApiService({TokenGetter? tokenGetter}) : _tokenGetter = tokenGetter {
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 30),
@@ -17,15 +24,19 @@ class ApiService {
 
     // 添加认证拦截器
     _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) {
+      onRequest: (options, handler) async {
         debugPrint('[ApiService] Request: ${options.method} ${options.uri}');
-        // 只在没有设置时才使用默认 token
+
+        // 获取 token
+        String? token;
         if (!options.headers.containsKey('Authorization')) {
-          options.headers['Authorization'] = 'Bearer ${AppConfig.apiToken}';
+          token = await _getToken();
+          if (token != null) {
+            options.headers['Authorization'] = 'Bearer $token';
+            options.headers['X-API-Token'] = token;
+          }
         }
-        if (!options.headers.containsKey('X-API-Token')) {
-          options.headers['X-API-Token'] = AppConfig.apiToken;
-        }
+
         return handler.next(options);
       },
       onResponse: (response, handler) {
@@ -37,6 +48,27 @@ class ApiService {
         return handler.next(error);
       },
     ));
+  }
+
+  /// 设置 token 获取器
+  void setTokenGetter(TokenGetter getter) {
+    _tokenGetter = getter;
+  }
+
+  /// 获取当前有效的 token
+  Future<String?> _getToken() async {
+    // 优先使用自定义 token 获取器
+    if (_tokenGetter != null) {
+      return await _tokenGetter!();
+    }
+
+    // Clerk 模式：从 ClerkAuthService 获取
+    if (AppConfig.useClerkAuth) {
+      return await ClerkAuthService.instance.getSessionToken();
+    }
+
+    // Token 模式：使用静态 token
+    return AppConfig.apiToken;
   }
 
   String get _baseUrl => AppConfig.httpBaseUrl;
