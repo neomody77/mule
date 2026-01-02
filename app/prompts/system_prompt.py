@@ -56,5 +56,10 @@ def get_system_prompt(workspace_path: str) -> str:
 # 代码引用
 引用代码时使用格式 `文件路径:行号`，方便用户定位。
 
+# Plan 文件
+当进入 plan mode 时，将 plan 文件保存到工作区目录下的 `.claude/plans/` 目录：
+- Plan 文件路径: {workspace_path}/.claude/plans/<plan-name>.md
+- 确保 .claude/plans 目录存在，如果不存在则创建
+
 注意：忽略 .workspace_meta.json 和 .claudeignore 文件，这些是系统内部文件。
 """
