@@ -266,13 +266,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
               await _syncAllSessions(serverWorkspaces);
             }),
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              onPressed: () => context.push(AppRoutes.settings),
-              tooltip: 'Settings',
-            ).withCommand('home.settings', onTap: () {
-              context.push(AppRoutes.settings);
-            }),
+            GestureDetector(
+              onTap: () => context.go(AppRoutes.settings),
+              child: const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Icon(Icons.settings_outlined),
+              ),
+            ),
           ],
         ),
         body: serverState.servers.isEmpty
@@ -311,7 +311,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: () => context.push(AppRoutes.settings),
+            onPressed: () => context.go(AppRoutes.settings),
             icon: const Icon(Icons.add),
             label: const Text('Add Server'),
           ),
