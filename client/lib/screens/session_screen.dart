@@ -217,12 +217,27 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           ).withCommand('session.back', onTap: () => Navigator.pop(context)),
           title: session == null
               ? const Text('Session')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(session.name),
-                    _buildConnectionStatus(session.connectionState),
-                  ],
+              : GestureDetector(
+                  onTap: _showRenameDialog,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              session.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            _buildConnectionStatus(session.connectionState),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.edit, size: 16, color: ZiaOlive.shade300),
+                    ],
+                  ),
                 ),
           actions: [
             // Todo 按钮 - 有任务时显示
@@ -234,11 +249,25 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                   child: const Icon(Icons.checklist),
                 ),
                 onPressed: _showTodoSheet,
+                tooltip: 'Tasks',
               ),
-            // 更多操作 - 使用 BottomSheet
+            // Files 按钮
             IconButton(
-              icon: const Icon(Icons.more_vert),
-              onPressed: _showActionsSheet,
+              icon: const Icon(Icons.folder_outlined),
+              onPressed: _openFileDrawer,
+              tooltip: 'Files',
+            ),
+            // Compact 按钮
+            IconButton(
+              icon: const Icon(Icons.compress),
+              onPressed: _compactContext,
+              tooltip: 'Compact Context',
+            ),
+            // Clear 按钮
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              onPressed: _confirmClearMessages,
+              tooltip: 'Clear Messages',
             ),
           ],
         ),
@@ -534,67 +563,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     );
   }
 
-  void _showActionsSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 拖动指示器
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: ZiaOlive.shade200,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            _buildActionTile(
-              icon: Icons.folder_outlined,
-              title: 'Files',
-              onTap: () {
-                Navigator.pop(context);
-                _openFileDrawer();
-              },
-            ),
-            const Divider(height: 1),
-            _buildActionTile(
-              icon: Icons.delete_outline,
-              title: 'Clear Messages',
-              onTap: () {
-                Navigator.pop(context);
-                _confirmClearMessages();
-              },
-            ),
-            _buildActionTile(
-              icon: Icons.edit_outlined,
-              title: 'Rename',
-              onTap: () {
-                Navigator.pop(context);
-                _showRenameDialog();
-              },
-            ),
-            _buildActionTile(
-              icon: Icons.compress,
-              title: 'Compact Context',
-              onTap: () {
-                Navigator.pop(context);
-                _compactContext();
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _showTodoSheet() {
     final session = ref.read(sessionProvider).getSession(_sessionId);
     if (session == null || session.todos.isEmpty) return;
@@ -662,18 +630,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildActionTile({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Icon(icon, color: ZiaOlive.shade400),
-      title: Text(title),
-      onTap: onTap,
     );
   }
 

@@ -28,6 +28,7 @@ class SessionInfo:
         created_at: str | None = None,
         updated_at: str | None = None,
         session_type: str = "normal",  # normal | plan_monitor | webhook
+        todos: list[dict] | None = None,  # TodoWrite 工具的任务列表
     ):
         self.id = id
         self.workspace_id = workspace_id
@@ -35,6 +36,7 @@ class SessionInfo:
         self.created_at = created_at or datetime.now().isoformat()
         self.updated_at = updated_at or self.created_at
         self.session_type = session_type
+        self.todos = todos or []
 
     def to_dict(self) -> dict:
         return {
@@ -44,6 +46,7 @@ class SessionInfo:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "type": self.session_type,
+            "todos": self.todos,
         }
 
     @classmethod
@@ -55,6 +58,7 @@ class SessionInfo:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             session_type=data.get("type", "normal"),
+            todos=data.get("todos", []),
         )
 
 
@@ -139,6 +143,28 @@ class MessageStore:
             sessions[session_id]["title"] = title
         self._save_sessions_meta(workspace_id, sessions)
         return SessionInfo.from_dict(sessions[session_id])
+
+    def update_session_todos(
+        self,
+        workspace_id: str,
+        session_id: str,
+        todos: list[dict],
+    ) -> SessionInfo | None:
+        """更新 session 的 todos"""
+        sessions = self._load_sessions_meta(workspace_id)
+        if session_id not in sessions:
+            # 如果 session 不存在，先创建
+            self.create_session(workspace_id, session_id)
+            sessions = self._load_sessions_meta(workspace_id)
+        sessions[session_id]["updated_at"] = datetime.now().isoformat()
+        sessions[session_id]["todos"] = todos
+        self._save_sessions_meta(workspace_id, sessions)
+        return SessionInfo.from_dict(sessions[session_id])
+
+    def get_session_todos(self, workspace_id: str, session_id: str) -> list[dict]:
+        """获取 session 的 todos"""
+        session = self.get_session(workspace_id, session_id)
+        return session.todos if session else []
 
     def delete_session(self, workspace_id: str, session_id: str) -> bool:
         """删除 session"""

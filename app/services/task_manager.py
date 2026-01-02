@@ -276,11 +276,22 @@ class TaskManager:
 
     def _store_tool_use(self, workspace_id: str, session_id: str, data: dict):
         """存储工具调用"""
+        tool_name = data.get("name", "")
+
+        # 特殊处理 TodoWrite 工具 - 保存 todos 到 session
+        if tool_name == "TodoWrite":
+            tool_input = data.get("input", {})
+            todos = tool_input.get("todos", [])
+            if todos:
+                message_store.update_session_todos(workspace_id, session_id, todos)
+                logger.info(f"Saved {len(todos)} todos for session {session_id}")
+            return  # 不存储为普通工具调用
+
         message_store.append_tool_use(
             workspace_id,
             session_id,
             tool_id=data.get("id", ""),
-            tool_name=data.get("name", ""),
+            tool_name=tool_name,
             description=data.get("description"),
         )
 

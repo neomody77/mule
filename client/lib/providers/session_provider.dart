@@ -440,6 +440,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     'prompt_dequeued': _handlePromptDequeued,
     'session_title_updated': _handleSessionTitleUpdated,
     'user_message': _handleUserMessage,
+    'todos_sync': _handleTodosSync,
   };
 
   // 标记未读的事件类型
@@ -546,6 +547,19 @@ class SessionNotifier extends StateNotifier<SessionState> {
         .toList();
 
     debugPrint('[SessionNotifier] TodoWrite: ${todos.length} todos');
+    _updateSession(sessionId, (s) => s.copyWith(todos: todos));
+  }
+
+  /// 处理 todos_sync 事件（订阅时从服务端加载）
+  void _handleTodosSync(String sessionId, Map<String, dynamic> data) {
+    final todosData = data['todos'] as List<dynamic>?;
+    if (todosData == null || todosData.isEmpty) return;
+
+    final todos = todosData
+        .map((t) => TodoItem.fromJson(t as Map<String, dynamic>))
+        .toList();
+
+    debugPrint('[SessionNotifier] Todos sync: ${todos.length} todos');
     _updateSession(sessionId, (s) => s.copyWith(todos: todos));
   }
 
