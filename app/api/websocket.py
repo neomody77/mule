@@ -385,6 +385,14 @@ async def _handle_subscribe(ctx: MessageHandlerContext) -> bool:
         "data": {"workspace_id": ctx.workspace_id, "session_id": ctx.session_id}
     })
 
+    # 发送 session 的 todos（如果有的话）
+    todos = message_store.get_session_todos(ctx.workspace_id, ctx.session_id)
+    if todos:
+        await manager.send_to_connection(ctx.conn_id, {
+            "event": "todos_sync",
+            "data": {"todos": todos}
+        })
+
     # 发送当前任务状态
     current_task = task_manager.get_current_task(callback_key)
     if current_task:
