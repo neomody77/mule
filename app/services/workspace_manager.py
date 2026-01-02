@@ -85,6 +85,49 @@ class WorkspaceManager:
             path=str(workspace_path),
         )
 
+    def create_workspace_with_id(
+        self,
+        workspace_id: str,
+        name: str,
+        description: Optional[str] = None
+    ) -> WorkspaceInfo:
+        """创建指定 ID 的工作区"""
+        settings.ensure_workspace_base_dir()
+
+        workspace_path = self._get_workspace_path(workspace_id)
+
+        if workspace_path.exists():
+            # 已存在，返回现有的
+            existing = self.get_workspace(workspace_id)
+            if existing:
+                return existing
+
+        workspace_path.mkdir(parents=True, exist_ok=True)
+
+        # 创建 .claudeignore 文件
+        claudeignore_path = workspace_path / ".claudeignore"
+        if not claudeignore_path.exists():
+            claudeignore_path.write_text(".workspace_meta.json\n.claudeignore\n")
+
+        now = datetime.now()
+        meta = {
+            "id": workspace_id,
+            "name": name,
+            "description": description,
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        self._save_meta(workspace_id, meta)
+
+        return WorkspaceInfo(
+            id=workspace_id,
+            name=name,
+            description=description,
+            created_at=now,
+            updated_at=now,
+            path=str(workspace_path),
+        )
+
     def get_workspace(self, workspace_id: str, include_deleted: bool = False) -> Optional[WorkspaceInfo]:
         """获取工作区信息"""
         if not self.workspace_exists(workspace_id):
