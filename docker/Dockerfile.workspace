@@ -1,0 +1,66 @@
+# Mule Workspace Sandbox - 安全隔离的工作区环境
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+# Install base packages
+RUN apt-get update && apt-get install -y -qq --no-install-recommends \
+    git \
+    curl \
+    wget \
+    vim \
+    nano \
+    build-essential \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    sudo \
+    gosu \
+    jq \
+    tree \
+    htop \
+    less \
+    unzip \
+    zip \
+    # Python
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.12 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+
+# Install Node.js 22 LTS
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g pnpm && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create dev user with sudo privileges
+RUN groupadd -f dev && \
+    useradd -m -s /bin/bash -g dev dev && \
+    echo "dev ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/dev && \
+    chmod 0440 /etc/sudoers.d/dev
+
+# Install uv for dev user
+RUN su dev -c "curl -LsSf https://astral.sh/uv/install.sh | sh" 2>/dev/null
+ENV PATH="/home/dev/.local/bin:$PATH"
+
+# Install Claude Code as dev user
+RUN su dev -c "curl -fsSL https://claude.ai/install.sh | bash"
+
+# Setup workspace
+RUN mkdir -p /workspace && chown dev:dev /workspace
+WORKDIR /workspace
+
+# Copy entrypoint script
+COPY entrypoint-workspace.sh /usr/local/bin/entrypoint
+RUN chmod 755 /usr/local/bin/entrypoint
+
+ENTRYPOINT ["/usr/local/bin/entrypoint"]
+CMD ["/bin/bash"]

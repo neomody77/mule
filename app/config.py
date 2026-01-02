@@ -47,11 +47,11 @@ class Settings(BaseSettings):
     ws_heartbeat_interval: int = 30  # 秒
 
     # Docker 隔离配置
-    use_docker_isolation: bool = False  # 是否使用 Docker 隔离 workspace
-    docker_image: str = "mule-workspace:latest"  # workspace 容器镜像
+    use_sandbox: bool = False  # 是否使用 Docker 沙箱隔离 workspace
+    sandbox_image: str = "mule-workspace:latest"  # 沙箱容器镜像
 
-    # Agent 后端配置
-    use_google_adk: bool = False  # 使用 Google ADK 替代 Claude Agent SDK
+    # Agent 后端配置: claude, sandbox, adk
+    agent_backend: str = "claude"  # claude=直接使用SDK, sandbox=Docker隔离, adk=Google ADK
     adk_model: str = "gemini-2.0-flash"  # Google ADK 使用的模型
 
     model_config = {
