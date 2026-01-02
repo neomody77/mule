@@ -180,14 +180,17 @@ if static_dir.exists():
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """SPA fallback - 处理所有未匹配的路由"""
-        # 跳过 API 和 WebSocket 路由
-        if full_path.startswith(("api/", "ws", "health")):
+        # 跳过 API 和 WebSocket 路由（这些由其他 router 处理）
+        if full_path.startswith(("api", "ws", "health", "cli")):
             return {"error": "Not found"}
 
+        # 尝试作为静态文件提供
         file_path = static_dir / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
-        # SPA 路由回退到 index.html
+
+        # 其他所有路由（包括 /session/... /settings 等）回退到 index.html
+        # 由 Flutter 前端路由处理
         return FileResponse(static_dir / "index.html")
 
 
