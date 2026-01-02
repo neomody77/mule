@@ -7,10 +7,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.config import settings
 from app.api import workspaces, websocket, connect, cli_sessions
@@ -88,6 +88,30 @@ async def api_info():
 async def health_check():
     """健康检查"""
     return {"status": "healthy"}
+
+
+@app.get("/qr")
+async def qr_page(
+    name: str = Query(None, description="服务器名称"),
+    host: str = Query(None, description="自定义 host"),
+    https: bool = Query(False, description="是否使用 HTTPS"),
+):
+    """
+    快捷二维码页面
+
+    访问 /qr 即可显示二维码，方便移动端扫码连接
+    """
+    url = "/api/connect/qrcode/html"
+    params = []
+    if name:
+        params.append(f"name={name}")
+    if host:
+        params.append(f"host={host}")
+    if https:
+        params.append("https=true")
+    if params:
+        url += "?" + "&".join(params)
+    return RedirectResponse(url=url)
 
 
 # 静态文件服务 (Flutter Web)
