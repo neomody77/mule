@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -28,9 +29,75 @@ SANDBOX_IMAGE = "mule-workspace:latest"
 # Claude 认证文件路径 (宿主机)
 CLAUDE_CONFIG_DIR = Path.home() / ".claude"
 CLAUDE_AUTH_FILE = Path.home() / ".claude.json"
+CLAUDE_CREDENTIALS_FILE = CLAUDE_CONFIG_DIR / ".credentials.json"
 
 # 容器数据目录（每个容器独立的 .claude 目录）
 CONTAINER_DATA_DIR = settings.data_dir / "containers"
+
+
+class CredentialsWatcher:
+    """监听 .credentials.json 文件变化，同步到所有容器专属目录"""
+
+    def __init__(self):
+        self._last_mtime: float = 0
+        self._task: Optional[asyncio.Task] = None
+
+    def _get_all_container_dirs(self) -> list[Path]:
+        """获取所有容器专属目录"""
+        if not CONTAINER_DATA_DIR.exists():
+            return []
+        return [d / ".claude" for d in CONTAINER_DATA_DIR.iterdir() if d.is_dir()]
+
+    def _sync_credentials(self) -> None:
+        """同步 credentials 到所有容器目录"""
+        if not CLAUDE_CREDENTIALS_FILE.exists():
+            return
+
+        container_dirs = self._get_all_container_dirs()
+        if not container_dirs:
+            return
+
+        for container_claude_dir in container_dirs:
+            dst = container_claude_dir / ".credentials.json"
+            if container_claude_dir.exists():
+                try:
+                    shutil.copy2(CLAUDE_CREDENTIALS_FILE, dst)
+                    os.chmod(dst, 0o600)
+                    logger.info(f"Synced credentials to {dst}")
+                except Exception as e:
+                    logger.error(f"Failed to sync credentials to {dst}: {e}")
+
+    async def _watch_loop(self) -> None:
+        """监听文件变化的循环"""
+        logger.info(f"Starting credentials watcher for {CLAUDE_CREDENTIALS_FILE}")
+
+        while True:
+            try:
+                if CLAUDE_CREDENTIALS_FILE.exists():
+                    mtime = CLAUDE_CREDENTIALS_FILE.stat().st_mtime
+                    if mtime > self._last_mtime:
+                        if self._last_mtime > 0:  # 不是首次检测
+                            logger.info("Credentials file changed, syncing...")
+                            self._sync_credentials()
+                        self._last_mtime = mtime
+            except Exception as e:
+                logger.error(f"Error watching credentials: {e}")
+
+            await asyncio.sleep(5)  # 每 5 秒检查一次
+
+    def start(self) -> None:
+        """启动监听"""
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._watch_loop())
+
+    def stop(self) -> None:
+        """停止监听"""
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+
+# 全局 credentials 监听器
+credentials_watcher = CredentialsWatcher()
 
 
 def get_container_name(workspace_id: str, session_id: str) -> str:
@@ -81,18 +148,22 @@ class SandboxAgent:
     def _setup_container_claude_dir(self) -> None:
         """准备容器专属的 .claude 目录（在宿主机上）
 
-        挂载策略：
-        - .credentials.json: 只读挂载宿主机的（token 更新会同步）
+        策略：
+        - .credentials.json: 复制到容器专属目录，watcher 负责后续同步
         - .claude/: 容器专属目录，可读写（projects/ 等）
         - .claude.json: 复制一份到容器专属目录（Claude 需要写入）
         """
-        import shutil
-
         # 创建容器专属目录
         self.container_claude_dir.mkdir(parents=True, exist_ok=True)
 
+        # 复制 .credentials.json 到容器专属目录
+        if CLAUDE_CREDENTIALS_FILE.exists():
+            dst_credentials = self.container_claude_dir / ".credentials.json"
+            shutil.copy2(CLAUDE_CREDENTIALS_FILE, dst_credentials)
+            os.chmod(dst_credentials, 0o600)
+            logger.info(f"Copied credentials to {dst_credentials}")
+
         # 复制 .claude.json 到容器专属目录（如果不存在）
-        # 这个文件 Claude 需要写入，所以不能只读挂载
         src_claude_json = CLAUDE_AUTH_FILE
         dst_claude_json = self.container_claude_dir / ".claude.json"
         if src_claude_json.exists() and not dst_claude_json.exists():
@@ -152,10 +223,8 @@ class SandboxAgent:
             # 挂载工作区
             "-v", f"{self.workspace_path}:/workspace",
             "-w", "/workspace",
-            # .claude/ 目录挂载（可读写，包含 projects/ 等）
+            # .claude/ 目录挂载（可读写，包含 credentials、projects 等）
             "-v", f"{self.container_claude_dir}:{container_home}/.claude",
-            # .credentials.json 只读挂载到 .claude/ 内（token 更新会同步）
-            "-v", f"{CLAUDE_CONFIG_DIR / '.credentials.json'}:{container_home}/.claude/.credentials.json:ro",
             # .claude.json 挂载（可读写）
             "-v", f"{self.container_claude_dir / '.claude.json'}:{container_home}/.claude.json",
         ]

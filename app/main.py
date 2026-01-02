@@ -18,6 +18,7 @@ from app.api import workspaces, websocket, cli_sessions, webhook
 from app.services.workspace_manager import workspace_manager
 from app.services.message_store import message_store
 from app.services.plan_monitor import plan_monitor_registry, PLAN_MONITOR_SESSION_ID
+from app.services.sandbox_agent import credentials_watcher
 
 # 配置日志
 logging.basicConfig(
@@ -96,12 +97,22 @@ async def lifespan(app: FastAPI):
     await plan_monitor_registry.start_all_monitors()
     logger.info(f"Started {len(settings.token_list)} plan monitors")
 
+    # 启动 credentials watcher（仅 Docker 隔离模式）
+    if settings.use_docker_isolation:
+        credentials_watcher.start()
+        logger.info("Started credentials watcher for Docker isolation")
+
     logger.info("Server started successfully")
 
     yield
 
     # 关闭时
     logger.info("Shutting down server...")
+
+    # 停止 credentials watcher
+    if settings.use_docker_isolation:
+        credentials_watcher.stop()
+        logger.info("Stopped credentials watcher")
 
     # 停止所有 plan monitors
     plan_monitor_registry.stop_all_monitors()

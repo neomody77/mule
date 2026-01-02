@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../config/app_config.dart';
+import '../models/server_config.dart';
 import '../models/workspace.dart';
 import '../models/file_node.dart';
 
@@ -118,6 +119,44 @@ class ApiService {
   Future<String> readFile(String workspaceId, String filePath) async {
     final response = await _dio.get(
       '$_baseUrl/api/workspaces/$workspaceId/files/$filePath',
+    );
+    return response.data['content'];
+  }
+
+  /// 列出工作区文件（使用指定服务器配置）
+  Future<List<FileNode>> listFilesWithServer(
+    ServerConfig server,
+    String workspaceId, {
+    String path = '',
+  }) async {
+    final response = await _dio.get(
+      '${server.httpBaseUrl}/api/workspaces/$workspaceId/files',
+      queryParameters: {'path': path},
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer ${server.token}',
+          'X-API-Token': server.token,
+        },
+      ),
+    );
+    final List<dynamic> files = response.data['files'];
+    return files.map((json) => FileNode.fromJson(json)).toList();
+  }
+
+  /// 读取文件内容（使用指定服务器配置）
+  Future<String> readFileWithServer(
+    ServerConfig server,
+    String workspaceId,
+    String filePath,
+  ) async {
+    final response = await _dio.get(
+      '${server.httpBaseUrl}/api/workspaces/$workspaceId/files/$filePath',
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer ${server.token}',
+          'X-API-Token': server.token,
+        },
+      ),
     );
     return response.data['content'];
   }
