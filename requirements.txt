@@ -1,4 +1,4 @@
-# Claude Code Remote - Python 依赖
+# Mule - Python 依赖
 
 # Web 框架
 fastapi>=0.109.0
