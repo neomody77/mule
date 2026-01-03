@@ -769,7 +769,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
       }
     } else if (statusType == 'compacting') {
       // 压缩上下文中
-      _updateSession(sessionId, (s) => s.copyWith(isProcessing: true));
+      _updateSession(sessionId, (s) => s.copyWith(isProcessing: true, isCompacting: true));
       _addMessage(
         sessionId,
         ChatMessage(
@@ -788,7 +788,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
           content: message ?? 'Context compacted',
         ),
       );
-      _updateSession(sessionId, (s) => s.copyWith(isProcessing: false));
+      _updateSession(sessionId, (s) => s.copyWith(isProcessing: false, isCompacting: false));
     } else if (statusType == 'cancelled') {
       // 先停止最后一条消息的 streaming 状态
       _updateLastMessage(sessionId, (m) => m.copyWith(isStreaming: false));
