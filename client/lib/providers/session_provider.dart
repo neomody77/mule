@@ -469,6 +469,18 @@ class SessionNotifier extends StateNotifier<SessionState> {
     _connectionPool.sendCompact(sessionId);
   }
 
+  /// 发送 ping
+  void pingSession(String sessionId) {
+    _connectionPool.sendPingForSession(sessionId);
+  }
+
+  /// 保存输入框草稿
+  void saveDraft(String sessionId, String draft) {
+    _updateSession(sessionId, (s) => s.copyWith(draft: draft));
+    // 延迟保存，避免频繁写入
+    Future.delayed(const Duration(milliseconds: 500), () => _save());
+  }
+
   /// 清除 session 消息
   void clearMessages(String sessionId) {
     final index = state.sessions.indexWhere((s) => s.id == sessionId);

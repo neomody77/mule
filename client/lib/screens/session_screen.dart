@@ -65,17 +65,35 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     // 监听输入框焦点变化，获得焦点时滚动到底部
     _focusNode.addListener(_onFocusChange);
 
+    // 监听输入框内容变化，保存草稿
+    _inputController.addListener(_onInputChanged);
+
     // 设置 ADB 方法通道处理器
     _adbChannel.setMethodCallHandler(_handleAdbMethod);
 
     // 连接 WebSocket 并滚动到底部
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _connect();
+      // 恢复草稿内容
+      _restoreDraft();
       // 进入时强制滚动到底部（延迟一下等消息加载）
       Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted) _forceScrollToBottom();
       });
     });
+  }
+
+  void _restoreDraft() {
+    final session = ref.read(sessionProvider).getSession(_sessionId);
+    if (session != null && session.draft.isNotEmpty) {
+      _inputController.text = session.draft;
+    }
+  }
+
+  void _onInputChanged() {
+    // 保存草稿（避免发送后也触发保存，通过检查内容来判断）
+    final content = _inputController.text;
+    ref.read(sessionProvider.notifier).saveDraft(_sessionId, content);
   }
 
   void _onScroll() {
@@ -128,6 +146,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     _adbChannel.setMethodCallHandler(null);
     _scrollController.removeListener(_onScroll);
     _focusNode.removeListener(_onFocusChange);
+    _inputController.removeListener(_onInputChanged);
     _inputController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -186,6 +205,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
 
     ref.read(sessionProvider.notifier).sendMessage(_sessionId, content);
     _inputController.clear();
+    // 清除草稿
+    ref.read(sessionProvider.notifier).saveDraft(_sessionId, '');
 
     // 用户发送消息后，重置滚动状态并滚动到底部
     _userScrolledUp = false;
@@ -225,12 +246,12 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           ).withCommand('session.back', onTap: () => _goBack()),
           title: session == null
               ? const Text('Session')
-              : GestureDetector(
-                  onTap: _showRenameDialog,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: GestureDetector(
+                        onTap: () => _handleTitleTap(session.connectionState),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -242,10 +263,13 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                           ],
                         ),
                       ),
-                      const SizedBox(width: 4),
-                      Icon(Icons.edit, size: 16, color: ZiaOlive.shade300),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 4),
+                    GestureDetector(
+                      onTap: _showRenameDialog,
+                      child: Icon(Icons.edit, size: 16, color: ZiaOlive.shade300),
+                    ),
+                  ],
                 ),
           actions: [
             // Todo 按钮 - 有任务时显示
@@ -707,6 +731,28 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
         ],
       ),
     );
+  }
+
+  void _handleTitleTap(SessionConnectionState state) {
+    if (state == SessionConnectionState.connected) {
+      // 已连接：发送 ping
+      ref.read(sessionProvider.notifier).pingSession(_sessionId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ping sent'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    } else {
+      // 未连接：尝试重连
+      _connect();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Reconnecting...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
   }
 
   void _showRenameDialog() {

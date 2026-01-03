@@ -71,6 +71,7 @@ class ChatSession {
   List<TodoItem> todos; // 当前任务的 todo list
   bool deleted; // 是否已软删除
   DateTime? deletedAt; // 删除时间
+  String draft; // 输入框草稿内容
 
   ChatSession({
     required this.id,
@@ -89,6 +90,7 @@ class ChatSession {
     List<TodoItem>? todos,
     this.deleted = false,
     this.deletedAt,
+    this.draft = '',
   })  : createdAt = createdAt ?? DateTime.now(),
         lastActiveAt = lastActiveAt ?? DateTime.now(),
         messages = messages ?? [],
@@ -131,6 +133,7 @@ class ChatSession {
       deletedAt: json['deletedAt'] != null
           ? DateTime.parse(json['deletedAt'] as String)
           : null,
+      draft: json['draft'] as String? ?? '',
     );
   }
 
@@ -146,6 +149,7 @@ class ChatSession {
       'lastActiveAt': lastActiveAt.toIso8601String(),
       'deleted': deleted,
       'deletedAt': deletedAt?.toIso8601String(),
+      'draft': draft,
     };
   }
 
@@ -168,6 +172,7 @@ class ChatSession {
     bool? deleted,
     DateTime? deletedAt,
     bool clearDeletedAt = false,
+    String? draft,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -186,6 +191,7 @@ class ChatSession {
       todos: todos ?? List.from(this.todos),
       deleted: deleted ?? this.deleted,
       deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
+      draft: draft ?? this.draft,
     );
   }
 
