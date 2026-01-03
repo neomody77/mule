@@ -564,6 +564,9 @@ else:
                 output = output.replace("+org%3Acreate_api_key", "")
                 output = output.replace("org:create_api_key+", "")
                 output = output.replace("+org:create_api_key", "")
+                # 解码 URL，避免在客户端 markdown 渲染时被二次编码
+                import urllib.parse
+                output = urllib.parse.unquote(output)
                 logger.info(f"Got login URL: {output[:50]}...")
                 return output
 
