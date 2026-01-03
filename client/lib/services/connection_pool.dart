@@ -404,9 +404,16 @@ class ConnectionPool {
     });
   }
 
-  /// 发送 ping
+  /// 发送 ping (通过 serverId)
   void sendPing(String serverId) {
     _sendToServer(serverId, {'type': 'ping'});
+  }
+
+  /// 发送 ping (通过 sessionId)
+  void sendPingForSession(String sessionId) {
+    final sub = _findSubscription(sessionId);
+    if (sub == null) return;
+    _sendToServer(sub.serverId, {'type': 'ping'});
   }
 
   SessionSubscription? _findSubscription(String sessionId) {
