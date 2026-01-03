@@ -367,6 +367,8 @@ class SandboxAgent:
                     elif event_type == "result":
                         session_id = event.get("session_id", "")
                         self.session_id = session_id
+                        result_text = event.get("result", "")
+                        is_error = event.get("is_error", False)
 
                         if self.workspace_id and self.agent_session_id and session_id:
                             workspace_manager.set_session_id(
@@ -377,9 +379,19 @@ class SandboxAgent:
 
                         if self.activity_logger:
                             self.activity_logger.log_task_end(
-                                success=not event.get("is_error", False),
-                                error=event.get("result") if event.get("is_error") else None
+                                success=not is_error,
+                                error=result_text if is_error else None
                             )
+
+                        # 检测 401 认证错误
+                        if is_error and "401" in result_text and "authentication" in result_text.lower():
+                            logger.error("OAuth token expired, triggering re-login...")
+                            login_url = await self._get_login_url()
+                            if login_url:
+                                yield {
+                                    "event": "text_delta",
+                                    "data": {"text": f"\n\n⚠️ **OAuth token expired. Please login:**\n\n{login_url}\n\n"}
+                                }
 
                         yield {
                             "event": "message_end",
@@ -387,8 +399,8 @@ class SandboxAgent:
                                 "session_id": session_id,
                                 "duration_ms": event.get("duration_ms", 0),
                                 "num_turns": event.get("num_turns", 0),
-                                "is_error": event.get("is_error", False),
-                                "result": event.get("result", ""),
+                                "is_error": is_error,
+                                "result": result_text,
                                 "total_cost_usd": event.get("total_cost_usd", 0),
                             }
                         }
@@ -412,16 +424,6 @@ class SandboxAgent:
             if stderr_lines:
                 stderr_text = chr(10).join(stderr_lines)
                 logger.warning(f"Sandbox stderr: {stderr_text}")
-
-                # 检测 401 认证错误
-                if "401" in stderr_text and ("authentication" in stderr_text.lower() or "expired" in stderr_text.lower()):
-                    logger.error("OAuth token expired, triggering re-login...")
-                    login_url = await self._get_login_url()
-                    if login_url:
-                        yield {
-                            "event": "text_delta",
-                            "data": {"text": f"\n\n⚠️ **OAuth token expired. Please login:**\n\n{login_url}\n\n"}
-                        }
 
         except Exception as e:
             logger.error(f"Sandbox execution error: {e}", exc_info=True)
