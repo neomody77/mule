@@ -143,13 +143,20 @@ class UnifiedConnectionManager:
                 logger.error(f"Failed to send to {conn_id}: {e}")
                 self.disconnect(conn_id)
 
-    async def send_to_session(self, workspace_id: str, session_id: str, data: dict):
-        """发送数据到订阅了指定 session 的所有连接"""
+    async def send_to_session(self, workspace_id: str, session_id: str, data: dict, display_workspace_id: str = None):
+        """发送数据到订阅了指定 session 的所有连接
+
+        Args:
+            workspace_id: 实际的 workspace ID (用于查找订阅者)
+            session_id: session ID
+            data: 要发送的数据
+            display_workspace_id: 显示给客户端的 workspace ID (如 "default")，默认为 workspace_id
+        """
         session_key = (workspace_id, session_id)
 
-        # 在响应中添加 session 标识
+        # 在响应中添加 session 标识（使用 display_workspace_id 返回给客户端）
         data_with_session = {
-            "workspace_id": workspace_id,
+            "workspace_id": display_workspace_id or workspace_id,
             "session_id": session_id,
             **data
         }
@@ -315,8 +322,9 @@ class MessageHandlerContext:
         self.msg_type = data.get("type")
         self.token = token
         # 解析 workspace_id：如果是 "default" 则映射到用户的 token workspace
-        raw_workspace_id = data.get("workspace_id", "")
-        self.workspace_id = resolve_workspace_id(raw_workspace_id, token) if raw_workspace_id else ""
+        # 保留原始 workspace_id 用于返回给客户端
+        self.raw_workspace_id = data.get("workspace_id", "")
+        self.workspace_id = resolve_workspace_id(self.raw_workspace_id, token) if self.raw_workspace_id else ""
         self.session_id = data.get("session_id")
 
     @property
@@ -351,14 +359,14 @@ async def _handle_subscribe(ctx: MessageHandlerContext) -> bool:
     # 注册任务回调
     callback_key = ctx.task_key
     if callback_key not in ctx.registered_callbacks:
-        async def event_callback(event: dict, ws_id=ctx.workspace_id, ss_id=ctx.session_id):
-            await manager.send_to_session(ws_id, ss_id, event)
+        async def event_callback(event: dict, ws_id=ctx.workspace_id, ss_id=ctx.session_id, raw_ws_id=ctx.raw_workspace_id):
+            await manager.send_to_session(ws_id, ss_id, event, display_workspace_id=raw_ws_id)
         ctx.registered_callbacks[callback_key] = event_callback
         task_manager.register_callback(callback_key, event_callback)
 
     # 注册完成回调
     if callback_key not in ctx.registered_completion_callbacks:
-        async def completion_callback(task: Task, key=callback_key, ws_id=ctx.workspace_id, ss_id=ctx.session_id):
+        async def completion_callback(task: Task, key=callback_key, ws_id=ctx.workspace_id, ss_id=ctx.session_id, raw_ws_id=ctx.raw_workspace_id):
             await manager.process_pending_prompts(key)
             existing_title = workspace_manager.get_session_title(ws_id, ss_id)
             if not existing_title and task.status == TaskStatus.COMPLETED:
@@ -372,7 +380,7 @@ async def _handle_subscribe(ctx: MessageHandlerContext) -> bool:
                         await manager.send_to_session(ws_id, ss_id, {
                             "event": "session_title_updated",
                             "data": {"title": title}
-                        })
+                        }, display_workspace_id=raw_ws_id)
                         logger.info(f"Generated title for {ws_id}:{ss_id}: {title}")
                 except Exception as e:
                     logger.error(f"Failed to generate title: {e}")
@@ -382,7 +390,7 @@ async def _handle_subscribe(ctx: MessageHandlerContext) -> bool:
 
     await manager.send_to_connection(ctx.conn_id, {
         "event": "subscribed",
-        "data": {"workspace_id": ctx.workspace_id, "session_id": ctx.session_id}
+        "data": {"workspace_id": ctx.raw_workspace_id, "session_id": ctx.session_id}
     })
 
     # 发送 session 的 todos（如果有的话）
@@ -399,11 +407,11 @@ async def _handle_subscribe(ctx: MessageHandlerContext) -> bool:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "task_info",
             "data": current_task.to_dict()
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "status",
             "data": {"type": "task_start", "message": "Task running..."}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
 
     return True
 
@@ -414,8 +422,8 @@ async def _handle_unsubscribe(ctx: MessageHandlerContext) -> bool:
         manager.unsubscribe(ctx.conn_id, ctx.workspace_id, ctx.session_id)
     await manager.send_to_connection(ctx.conn_id, {
         "event": "unsubscribed",
-        "data": {"workspace_id": ctx.workspace_id, "session_id": ctx.session_id}
-    })
+        "data": {"workspace_id": ctx.raw_workspace_id, "session_id": ctx.session_id}
+    }, display_workspace_id=ctx.raw_workspace_id)
     return True
 
 
@@ -426,7 +434,7 @@ async def _handle_prompt(ctx: MessageHandlerContext) -> bool:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "error",
             "data": {"message": "Empty prompt"}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
         return True
 
     message_store.append_user_message(ctx.workspace_id, ctx.session_id, content)
@@ -435,7 +443,7 @@ async def _handle_prompt(ctx: MessageHandlerContext) -> bool:
     await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
         "event": "user_message",
         "data": {"content": content}
-    })
+    }, display_workspace_id=ctx.raw_workspace_id)
 
     current_task = task_manager.get_current_task(ctx.task_key)
     if current_task and current_task.status == TaskStatus.RUNNING:
@@ -445,7 +453,7 @@ async def _handle_prompt(ctx: MessageHandlerContext) -> bool:
     await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
         "event": "task_info",
         "data": {"task_id": task.id, "status": task.status.value, "prompt": content}
-    })
+    }, display_workspace_id=ctx.raw_workspace_id)
 
     agent = manager.get_or_create_agent(ctx.workspace_id, ctx.session_id)
     task_manager.start_task(task, agent)
@@ -467,7 +475,7 @@ async def _queue_prompt(ctx: MessageHandlerContext, content: str) -> bool:
             "content": content,
             "position": len(manager.pending_prompts[ctx.task_key]),
         }
-    })
+    }, display_workspace_id=ctx.raw_workspace_id)
     logger.info(f"Prompt {prompt_id} queued for {ctx.task_key}")
     return True
 
@@ -479,16 +487,16 @@ async def _handle_sync(ctx: MessageHandlerContext) -> bool:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "task_info",
             "data": current_task.to_dict()
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
         for task_event in current_task.events:
-            await manager.send_to_session(ctx.workspace_id, ctx.session_id, task_event.to_dict())
+            await manager.send_to_session(ctx.workspace_id, ctx.session_id, task_event.to_dict(), display_workspace_id=ctx.raw_workspace_id)
     else:
         latest_task = task_manager.get_latest_task(ctx.task_key)
         if latest_task:
             await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
                 "event": "task_info",
                 "data": latest_task.to_dict()
-            })
+            }, display_workspace_id=ctx.raw_workspace_id)
     return True
 
 
@@ -500,12 +508,12 @@ async def _handle_cancel(ctx: MessageHandlerContext) -> bool:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "status",
             "data": {"type": "cancelled", "message": "Task cancelled"}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
     else:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "status",
             "data": {"message": "No active task"}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
     return True
 
 
@@ -518,27 +526,27 @@ async def _handle_compact(ctx: MessageHandlerContext) -> bool:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "error",
             "data": {"message": "Agent does not support compact"}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
         return True
 
     # 通知开始压缩
     await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
         "event": "status",
         "data": {"type": "compacting", "message": "Compacting context..."}
-    })
+    }, display_workspace_id=ctx.raw_workspace_id)
 
     try:
         result = await agent.compact()
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "status",
             "data": {"type": "compact_done", "message": "Context compacted", "result": result}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
     except Exception as e:
         logger.error(f"Compact failed: {e}")
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "error",
             "data": {"message": f"Compact failed: {str(e)}"}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
 
     return True
 
@@ -553,13 +561,13 @@ async def _handle_history(ctx: MessageHandlerContext) -> bool:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "history",
             "data": {"task_id": task_id, "events": events}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
     else:
         tasks = task_manager.get_workspace_tasks(ctx.task_key)
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "tasks",
             "data": {"tasks": [t.to_dict() for t in tasks[-10:]]}
-        })
+        }, display_workspace_id=ctx.raw_workspace_id)
     return True
 
 
