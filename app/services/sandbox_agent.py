@@ -558,17 +558,12 @@ else:
             output = stdout.decode('utf-8').strip()
 
             if output.startswith("https://"):
-                # 移除无效的 scope (org:create_api_key)
-                import urllib.parse
-                parsed = urllib.parse.urlparse(output)
-                params = urllib.parse.parse_qs(parsed.query)
-                if 'scope' in params:
-                    scopes = params['scope'][0].split(' ')
-                    # 过滤掉 org:create_api_key scope
-                    scopes = [s for s in scopes if s != 'org:create_api_key']
-                    params['scope'] = [' '.join(scopes)]
-                    new_query = urllib.parse.urlencode(params, doseq=True)
-                    output = urllib.parse.urlunparse(parsed._replace(query=new_query))
+                # 移除无效的 scope (org:create_api_key) - 直接字符串替换
+                # URL 编码形式: org%3Acreate_api_key+ 或 +org%3Acreate_api_key
+                output = output.replace("org%3Acreate_api_key+", "")
+                output = output.replace("+org%3Acreate_api_key", "")
+                output = output.replace("org:create_api_key+", "")
+                output = output.replace("+org:create_api_key", "")
                 logger.info(f"Got login URL: {output[:50]}...")
                 return output
 
