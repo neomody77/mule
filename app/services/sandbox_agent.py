@@ -142,8 +142,11 @@ class TokenRefresher:
     async def _refresh_token(self) -> bool:
         """执行一次 token 刷新"""
         try:
-            remaining = self._get_token_remaining_seconds()
-            logger.info(f"Refreshing OAuth token on host... (remaining: {remaining/60:.0f} min)")
+            import time as _time
+            old_remaining = self._get_token_remaining_seconds()
+            old_expiry = _time.time() + old_remaining
+
+            logger.info(f"[TokenRefresh] Calling claude -p ping (token remaining: {old_remaining/60:.0f} min, expires: {_time.strftime('%H:%M:%S', _time.localtime(old_expiry))})")
 
             process = await asyncio.create_subprocess_exec(
                 "claude", "-p", "ping", "--output-format", "json",
@@ -160,54 +163,75 @@ class TokenRefresher:
             stderr_text = stderr.decode() if stderr else ""
 
             if process.returncode == 0:
+                # 解析结果
+                import json
+                try:
+                    result = json.loads(stdout_text)
+                    pong_result = result.get("result", "")
+                    duration_ms = result.get("duration_ms", 0)
+                    logger.info(f"[TokenRefresh] Ping response: '{pong_result}' (took {duration_ms}ms)")
+                except:
+                    logger.info(f"[TokenRefresh] Ping completed")
+
                 new_remaining = self._get_token_remaining_seconds()
-                logger.info(f"Token refresh successful (new remaining: {new_remaining/60:.0f} min)")
+                new_expiry = _time.time() + new_remaining
+
+                # 检查 token 是否被刷新
+                if abs(new_remaining - old_remaining) > 60:  # 超过 1 分钟的变化
+                    logger.info(f"[TokenRefresh] Token REFRESHED! New expiry: {_time.strftime('%Y-%m-%d %H:%M:%S', _time.localtime(new_expiry))} (remaining: {new_remaining/60:.0f} min)")
+                else:
+                    logger.info(f"[TokenRefresh] Token unchanged (remaining: {new_remaining/60:.0f} min)")
+
                 # 同步到所有容器
                 credentials_watcher._sync_credentials()
                 return True
             else:
                 # 检查是否是 401 错误
                 if "401" in stdout_text or "expired" in stdout_text.lower():
-                    logger.error(f"Token expired! Need re-login. Output: {stdout_text[:200]}")
+                    logger.error(f"[TokenRefresh] Token EXPIRED! Need re-login")
                 else:
-                    logger.warning(f"Token refresh failed: {stderr_text[:200]}")
+                    logger.warning(f"[TokenRefresh] Ping failed: {stderr_text[:200]}")
                 return False
 
         except asyncio.TimeoutError:
-            logger.error("Token refresh timed out")
+            logger.error("[TokenRefresh] Ping timed out after 120s")
             return False
         except Exception as e:
-            logger.error(f"Token refresh error: {e}")
+            logger.error(f"[TokenRefresh] Error: {e}")
             return False
 
     async def _refresh_loop(self) -> None:
         """定时刷新循环"""
-        logger.info("Starting token refresher")
+        import time as _time
+        logger.info("[TokenRefresh] Starting token refresh loop")
 
         while True:
             try:
                 remaining = self._get_token_remaining_seconds()
-                logger.debug(f"Token remaining: {remaining/60:.0f} min")
+                expiry = _time.time() + remaining
 
                 if remaining <= 0:
                     # Token 已过期
-                    logger.warning("Token already expired, need manual re-login")
+                    logger.warning(f"[TokenRefresh] Token EXPIRED! Need manual re-login. Next check in {self.CHECK_INTERVAL_SECONDS}s")
                     await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
                     continue
 
                 if remaining < self.REFRESH_THRESHOLD_SECONDS:
                     # 临近过期，频繁刷新
-                    logger.info(f"Token expiring soon ({remaining/60:.0f} min), refreshing...")
+                    logger.info(f"[TokenRefresh] Token expiring soon! Remaining: {remaining/60:.0f} min, expires: {_time.strftime('%H:%M:%S', _time.localtime(expiry))}")
                     await self._refresh_token()
+                    logger.info(f"[TokenRefresh] Next refresh in {self.REFRESH_INTERVAL_SECONDS}s")
                     await asyncio.sleep(self.REFRESH_INTERVAL_SECONDS)
                 else:
                     # 还早，正常检查间隔
+                    logger.info(f"[TokenRefresh] Token OK. Remaining: {remaining/60:.0f} min ({remaining/3600:.1f}h), expires: {_time.strftime('%H:%M:%S', _time.localtime(expiry))}. Next check in {self.CHECK_INTERVAL_SECONDS}s")
                     await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
 
             except asyncio.CancelledError:
+                logger.info("[TokenRefresh] Refresh loop cancelled")
                 break
             except Exception as e:
-                logger.error(f"Token refresh loop error: {e}")
+                logger.error(f"[TokenRefresh] Loop error: {e}")
                 await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
 
     def start(self) -> None:
