@@ -107,6 +107,191 @@ def get_container_name(workspace_id: str, session_id: str) -> str:
     return f"mule-sandbox-{hash_value}"
 
 
+class PendingLogin:
+    """等待用户输入 auth code 的登录进程"""
+    def __init__(self, container_name: str):
+        self.container_name = container_name
+        self.login_url: Optional[str] = None
+        self.created_at = asyncio.get_event_loop().time()
+
+    async def start_and_get_url(self) -> Optional[str]:
+        """启动登录流程并返回登录 URL"""
+        try:
+            # 使用 Python PTY 脚本在容器中获取登录 URL
+            login_script = '''
+import pty, os, select, sys, time, re
+
+master, slave = pty.openpty()
+pid = os.fork()
+
+if pid == 0:
+    os.setsid()
+    os.dup2(slave, 0)
+    os.dup2(slave, 1)
+    os.dup2(slave, 2)
+    os.close(master)
+    os.close(slave)
+    os.execvp("claude", ["claude", "/login"])
+else:
+    os.close(slave)
+    all_output = b""
+    steps_done = set()
+    start = time.time()
+
+    while time.time() - start < 60:
+        r, _, _ = select.select([master], [], [], 0.3)
+        if r:
+            try:
+                data = os.read(master, 4096)
+                if not data:
+                    break
+                all_output += data
+                text = all_output.decode("utf-8", errors="ignore")
+
+                if "trust" not in steps_done and "Yes, proceed" in text:
+                    time.sleep(0.3)
+                    os.write(master, b"\\r")
+                    steps_done.add("trust")
+
+                if "login_method" not in steps_done and "Claude account with subscription" in text:
+                    time.sleep(0.3)
+                    os.write(master, b"\\r")
+                    steps_done.add("login_method")
+
+                urls = re.findall(r"https://claude\\.ai[^\\s\\x1b\\]\\)]+", text)
+                if urls:
+                    print(urls[-1].rstrip("."))
+                    os.kill(pid, 9)
+                    sys.exit(0)
+            except:
+                break
+
+    os.kill(pid, 9)
+'''
+            docker_exec = [
+                "docker", "exec", "-w", "/workspace",
+                self.container_name,
+                "python3", "-c", login_script
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *docker_exec,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
+            output = stdout.decode('utf-8').strip()
+
+            if output.startswith("https://"):
+                # 移除无效的 scope
+                output = output.replace("org%3Acreate_api_key+", "")
+                output = output.replace("+org%3Acreate_api_key", "")
+                # 解码 URL
+                import urllib.parse
+                output = urllib.parse.unquote(output)
+                self.login_url = output
+                return output
+
+            logger.warning(f"Failed to get login URL. stderr: {stderr.decode('utf-8')}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error starting login: {e}")
+            return None
+
+    async def submit_auth_code(self, auth_code: str) -> bool:
+        """提交 auth code 完成登录"""
+        try:
+            # 运行完整的登录流程，包括输入 auth code
+            login_script = f'''
+import pty, os, select, sys, time, re
+
+master, slave = pty.openpty()
+pid = os.fork()
+
+if pid == 0:
+    os.setsid()
+    os.dup2(slave, 0)
+    os.dup2(slave, 1)
+    os.dup2(slave, 2)
+    os.close(master)
+    os.close(slave)
+    os.execvp("claude", ["claude", "/login"])
+else:
+    os.close(slave)
+    all_output = b""
+    steps_done = set()
+    start = time.time()
+    auth_code = "{auth_code}"
+
+    while time.time() - start < 120:
+        r, _, _ = select.select([master], [], [], 0.3)
+        if r:
+            try:
+                data = os.read(master, 4096)
+                if not data:
+                    break
+                all_output += data
+                text = all_output.decode("utf-8", errors="ignore")
+
+                if "trust" not in steps_done and "Yes, proceed" in text:
+                    time.sleep(0.3)
+                    os.write(master, b"\\r")
+                    steps_done.add("trust")
+
+                if "login_method" not in steps_done and "Claude account with subscription" in text:
+                    time.sleep(0.3)
+                    os.write(master, b"\\r")
+                    steps_done.add("login_method")
+
+                if "auth_code" not in steps_done and "Paste code" in text:
+                    time.sleep(0.3)
+                    os.write(master, (auth_code + "\\r").encode())
+                    steps_done.add("auth_code")
+
+                if "success" in text.lower() or "logged in" in text.lower():
+                    print("LOGIN_SUCCESS")
+                    os.kill(pid, 9)
+                    sys.exit(0)
+
+            except:
+                break
+
+    os.kill(pid, 9)
+    print("LOGIN_TIMEOUT")
+'''
+            docker_exec = [
+                "docker", "exec", "-w", "/workspace",
+                self.container_name,
+                "python3", "-c", login_script
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *docker_exec,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=150)
+            output = stdout.decode('utf-8').strip()
+
+            if "LOGIN_SUCCESS" in output:
+                logger.info(f"Login successful for {self.container_name}")
+                return True
+
+            logger.warning(f"Login failed: {output}, stderr: {stderr.decode('utf-8')}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error submitting auth code: {e}")
+            return False
+
+
+# 全局等待登录的容器映射: container_name -> PendingLogin
+_pending_logins: dict[str, PendingLogin] = {}
+
+
 class SandboxAgent:
     """Docker 隔离的 Claude Code Agent
 
@@ -144,6 +329,7 @@ class SandboxAgent:
 
         self._process: Optional[asyncio.subprocess.Process] = None
         self._is_processing = False
+        self._waiting_for_auth_code = False
 
     def _setup_container_claude_dir(self) -> None:
         """准备容器专属的 .claude 目录（在宿主机上）
@@ -264,6 +450,49 @@ class SandboxAgent:
         self._is_processing = True
 
         try:
+            # 检查是否是 auth code（用户回复登录验证码）
+            if self._waiting_for_auth_code and self.container_name in _pending_logins:
+                auth_code = prompt.strip()
+                # auth code 通常是一段较长的字符串
+                if len(auth_code) > 20 and " " not in auth_code:
+                    logger.info(f"Detected auth code, submitting...")
+                    yield {
+                        "event": "status",
+                        "data": {"type": "logging_in", "message": "Submitting auth code..."}
+                    }
+
+                    pending = _pending_logins[self.container_name]
+                    success = await pending.submit_auth_code(auth_code)
+
+                    if success:
+                        del _pending_logins[self.container_name]
+                        self._waiting_for_auth_code = False
+                        yield {
+                            "event": "text_delta",
+                            "data": {"text": "✅ Login successful! You can now continue using Claude.\n\n"}
+                        }
+                        yield {
+                            "event": "message_end",
+                            "data": {"is_error": False, "result": "Login successful"}
+                        }
+                    else:
+                        yield {
+                            "event": "text_delta",
+                            "data": {"text": "❌ Login failed. Please try again with a new code.\n\n"}
+                        }
+                        # 重新获取登录链接
+                        login_url = await pending.start_and_get_url()
+                        if login_url:
+                            yield {
+                                "event": "text_delta",
+                                "data": {"text": f"🔗 Please login again:\n\n{login_url}\n\nPaste the authentication code here after logging in.\n\n"}
+                            }
+                        yield {
+                            "event": "message_end",
+                            "data": {"is_error": True, "result": "Login failed"}
+                        }
+                    return
+
             # 确保容器运行
             self._ensure_container()
 
@@ -386,12 +615,27 @@ class SandboxAgent:
                         # 检测 401 认证错误
                         if is_error and "401" in result_text and "authentication" in result_text.lower():
                             logger.error("OAuth token expired, triggering re-login...")
-                            login_url = await self._get_login_url()
+
+                            # 创建 pending login
+                            pending = PendingLogin(self.container_name)
+                            login_url = await pending.start_and_get_url()
+
                             if login_url:
+                                _pending_logins[self.container_name] = pending
+                                self._waiting_for_auth_code = True
                                 yield {
                                     "event": "text_delta",
-                                    "data": {"text": f"\n\n⚠️ **OAuth token expired. Please login:**\n\n{login_url}\n\n"}
+                                    "data": {"text": f"⚠️ **OAuth token expired. Please login:**\n\n{login_url}\n\n📋 After logging in, paste the **Authentication Code** here to complete login.\n\n"}
                                 }
+                                yield {
+                                    "event": "message_end",
+                                    "data": {
+                                        "session_id": session_id,
+                                        "is_error": False,  # 不算错误，等待用户输入
+                                        "result": "Waiting for authentication code",
+                                    }
+                                }
+                                return  # 不继续执行，等待用户输入 auth code
 
                         yield {
                             "event": "message_end",
@@ -484,98 +728,6 @@ class SandboxAgent:
 
         generator = generators.get(tool_name)
         return generator() if generator else f"Using {tool_name}..."
-
-    async def _get_login_url(self) -> Optional[str]:
-        """在容器中执行 claude /login 并获取登录 URL"""
-        try:
-            self._ensure_container()
-
-            # 使用 Python PTY 脚本在容器中获取登录 URL
-            login_script = '''
-import pty, os, select, sys, time, re
-
-master, slave = pty.openpty()
-pid = os.fork()
-
-if pid == 0:
-    os.setsid()
-    os.dup2(slave, 0)
-    os.dup2(slave, 1)
-    os.dup2(slave, 2)
-    os.close(master)
-    os.close(slave)
-    os.execvp("claude", ["claude", "/login"])
-else:
-    os.close(slave)
-    all_output = b""
-    steps_done = set()
-    start = time.time()
-
-    while time.time() - start < 60:
-        r, _, _ = select.select([master], [], [], 0.3)
-        if r:
-            try:
-                data = os.read(master, 4096)
-                if not data:
-                    break
-                all_output += data
-                text = all_output.decode("utf-8", errors="ignore")
-
-                if "trust" not in steps_done and "Yes, proceed" in text:
-                    time.sleep(0.3)
-                    os.write(master, b"\\r")
-                    steps_done.add("trust")
-
-                if "login_method" not in steps_done and "Claude account with subscription" in text:
-                    time.sleep(0.3)
-                    os.write(master, b"\\r")
-                    steps_done.add("login_method")
-
-                urls = re.findall(r"https://claude\\.ai[^\\s\\x1b\\]\\)]+", text)
-                if urls:
-                    print(urls[-1].rstrip("."))
-                    os.kill(pid, 9)
-                    sys.exit(0)
-            except:
-                break
-
-    os.kill(pid, 9)
-'''
-
-            docker_exec = [
-                "docker", "exec", "-w", "/workspace",
-                self.container_name,
-                "python3", "-c", login_script
-            ]
-
-            process = await asyncio.create_subprocess_exec(
-                *docker_exec,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
-            output = stdout.decode('utf-8').strip()
-
-            if output.startswith("https://"):
-                # 移除无效的 scope (org:create_api_key) - 直接字符串替换
-                # URL 编码形式: org%3Acreate_api_key+ 或 +org%3Acreate_api_key
-                output = output.replace("org%3Acreate_api_key+", "")
-                output = output.replace("+org%3Acreate_api_key", "")
-                output = output.replace("org:create_api_key+", "")
-                output = output.replace("+org:create_api_key", "")
-                # 解码 URL，避免在客户端 markdown 渲染时被二次编码
-                import urllib.parse
-                output = urllib.parse.unquote(output)
-                logger.info(f"Got login URL: {output[:50]}...")
-                return output
-
-            logger.warning(f"Failed to get login URL. stderr: {stderr.decode('utf-8')}")
-            return None
-
-        except Exception as e:
-            logger.error(f"Error getting login URL: {e}")
-            return None
 
     async def cancel(self) -> None:
         """取消当前执行"""
