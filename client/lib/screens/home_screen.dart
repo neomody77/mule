@@ -9,6 +9,7 @@ import '../models/chat_session.dart';
 import '../models/server_config.dart';
 import '../models/workspace.dart';
 import '../providers/providers.dart';
+import '../providers/ui_state_provider.dart';
 import '../router.dart';
 import '../widgets/command_target.dart';
 
@@ -134,7 +135,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ref.read(sessionProvider.notifier).setActiveSession(session.id);
 
     if (mounted) {
-      context.go(AppRoutes.sessionPath(
+      context.push(AppRoutes.sessionPath(
         serverToUse.id,
         defaultWorkspace.id,
         session.id,
@@ -237,7 +238,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     ref.read(sessionProvider.notifier).setActiveSession(session.id);
 
-    context.go(AppRoutes.sessionPath(
+    context.push(AppRoutes.sessionPath(
       server.id,
       session.workspaceId,
       session.id,
@@ -248,6 +249,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final serverState = ref.watch(serverProvider);
     final sessionState = ref.watch(sessionProvider);
+    final uiState = ref.watch(uiStateProvider);
+    final viewMode = uiState.workspaceViewMode;
 
     return ScreenScope(
       screenId: 'home',
@@ -255,6 +258,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         appBar: AppBar(
           title: const Text('Mule'),
           actions: [
+            // 视图切换按钮
+            IconButton(
+              icon: Icon(
+                viewMode == WorkspaceViewMode.card
+                    ? Icons.view_list_outlined
+                    : Icons.grid_view_outlined,
+              ),
+              onPressed: () {
+                ref.read(uiStateProvider.notifier).toggleViewMode();
+              },
+              tooltip: viewMode == WorkspaceViewMode.card ? 'List View' : 'Card View',
+            ),
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: () async {
@@ -277,7 +292,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
         body: serverState.servers.isEmpty
             ? _buildEmptyServers()
-            : _buildWorkspaceCards(serverState, sessionState),
+            : viewMode == WorkspaceViewMode.card
+                ? _buildWorkspaceCards(serverState, sessionState)
+                : _buildWorkspaceList(serverState, sessionState),
         floatingActionButton: serverState.servers.isEmpty
             ? null
             : FloatingActionButton(
@@ -418,6 +435,70 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             label: const Text('Refresh'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 列表视图模式 - 点击进入 workspace 详情页
+  Widget _buildWorkspaceList(
+    ServerState serverState,
+    SessionState sessionState,
+  ) {
+    // 收集所有 workspace
+    final workspaceList = <_WorkspaceCardData>[];
+
+    for (final server in serverState.servers) {
+      final workspaces = serverState.getWorkspaces(server.id);
+      final isOnline = serverState.isServerOnline(server.id);
+
+      for (final ws in workspaces) {
+        final sessions = sessionState.getSessionsForWorkspace(server.id, ws.id);
+
+        workspaceList.add(_WorkspaceCardData(
+          server: server,
+          workspaceId: ws.id,
+          workspaceName: ws.name,
+          sessions: sessions,
+          isServerOnline: isOnline,
+        ));
+      }
+    }
+
+    // 排序：default workspace 在最上面
+    workspaceList.sort((a, b) {
+      if (a.workspaceId == 'default' && b.workspaceId != 'default') return -1;
+      if (a.workspaceId != 'default' && b.workspaceId == 'default') return 1;
+      return a.workspaceName.compareTo(b.workspaceName);
+    });
+
+    if (workspaceList.isEmpty) {
+      return _buildNoWorkspaces();
+    }
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
+        await _syncAllSessions(serverWorkspaces);
+      },
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: workspaceList.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final data = workspaceList[index];
+          return _WorkspaceListTile(
+            data: data,
+            onTap: () {
+              context.push(AppRoutes.workspacePath(
+                data.server.id,
+                data.workspaceId,
+              ));
+            },
+            onDelete: data.workspaceId != 'default'
+                ? () => _confirmDeleteWorkspace(data)
+                : null,
+          );
+        },
       ),
     );
   }
@@ -1188,7 +1269,7 @@ class _NewSessionSheetState extends ConsumerState<_NewSessionSheet> {
       // 设置为活跃 session
       ref.read(sessionProvider.notifier).setActiveSession(session.id);
 
-      context.go(AppRoutes.sessionPath(
+      context.push(AppRoutes.sessionPath(
         _selectedServer!.id,
         _selectedWorkspace!.id,
         session.id,
@@ -1527,6 +1608,124 @@ class _CreateWorkspaceSheetState extends ConsumerState<_CreateWorkspaceSheet> {
                   )
                 : const Text('Create Workspace'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Workspace 列表项（用于列表视图模式）
+class _WorkspaceListTile extends StatelessWidget {
+  final _WorkspaceCardData data;
+  final VoidCallback onTap;
+  final VoidCallback? onDelete;
+
+  const _WorkspaceListTile({
+    required this.data,
+    required this.onTap,
+    this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: ZiaOlive.shade500.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(
+          data.workspaceId == 'default'
+              ? Icons.home_outlined
+              : Icons.folder_outlined,
+          color: ZiaOlive.shade500,
+        ),
+      ),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              data.workspaceName,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (data.workspaceId == 'default') ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: ZiaOlive.shade500.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'Default',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: ZiaOlive.shade500,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      subtitle: Row(
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: data.isServerOnline ? ZiaOlive.success : ZiaOlive.error,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            data.server.name,
+            style: TextStyle(
+              fontSize: 12,
+              color: ZiaOlive.shade200,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '${data.sessions.length} session${data.sessions.length == 1 ? '' : 's'}',
+            style: TextStyle(
+              fontSize: 12,
+              color: ZiaOlive.shade300,
+            ),
+          ),
+        ],
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.chevron_right, color: ZiaOlive.shade300),
+          if (onDelete != null)
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, size: 20, color: ZiaOlive.shade300),
+              onSelected: (value) {
+                if (value == 'delete') {
+                  onDelete!();
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Delete', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
