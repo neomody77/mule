@@ -410,7 +410,18 @@ class SandboxAgent:
             # 等待 stderr 读取完成
             await stderr_task
             if stderr_lines:
-                logger.warning(f"Sandbox stderr: {chr(10).join(stderr_lines)}")
+                stderr_text = chr(10).join(stderr_lines)
+                logger.warning(f"Sandbox stderr: {stderr_text}")
+
+                # 检测 401 认证错误
+                if "401" in stderr_text and ("authentication" in stderr_text.lower() or "expired" in stderr_text.lower()):
+                    logger.error("OAuth token expired, triggering re-login...")
+                    login_url = await self._get_login_url()
+                    if login_url:
+                        yield {
+                            "event": "text_delta",
+                            "data": {"text": f"\n\n⚠️ **OAuth token expired. Please login:**\n\n{login_url}\n\n"}
+                        }
 
         except Exception as e:
             logger.error(f"Sandbox execution error: {e}", exc_info=True)
@@ -471,6 +482,89 @@ class SandboxAgent:
 
         generator = generators.get(tool_name)
         return generator() if generator else f"Using {tool_name}..."
+
+    async def _get_login_url(self) -> Optional[str]:
+        """在容器中执行 claude /login 并获取登录 URL"""
+        try:
+            self._ensure_container()
+
+            # 使用 Python PTY 脚本在容器中获取登录 URL
+            login_script = '''
+import pty, os, select, sys, time, re
+
+master, slave = pty.openpty()
+pid = os.fork()
+
+if pid == 0:
+    os.setsid()
+    os.dup2(slave, 0)
+    os.dup2(slave, 1)
+    os.dup2(slave, 2)
+    os.close(master)
+    os.close(slave)
+    os.execvp("claude", ["claude", "/login"])
+else:
+    os.close(slave)
+    all_output = b""
+    steps_done = set()
+    start = time.time()
+
+    while time.time() - start < 60:
+        r, _, _ = select.select([master], [], [], 0.3)
+        if r:
+            try:
+                data = os.read(master, 4096)
+                if not data:
+                    break
+                all_output += data
+                text = all_output.decode("utf-8", errors="ignore")
+
+                if "trust" not in steps_done and "Yes, proceed" in text:
+                    time.sleep(0.3)
+                    os.write(master, b"\\r")
+                    steps_done.add("trust")
+
+                if "login_method" not in steps_done and "Claude account with subscription" in text:
+                    time.sleep(0.3)
+                    os.write(master, b"\\r")
+                    steps_done.add("login_method")
+
+                urls = re.findall(r"https://claude\\.ai[^\\s\\x1b\\]\\)]+", text)
+                if urls:
+                    print(urls[-1].rstrip("."))
+                    os.kill(pid, 9)
+                    sys.exit(0)
+            except:
+                break
+
+    os.kill(pid, 9)
+'''
+
+            docker_exec = [
+                "docker", "exec", "-w", "/workspace",
+                self.container_name,
+                "python3", "-c", login_script
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *docker_exec,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
+            output = stdout.decode('utf-8').strip()
+
+            if output.startswith("https://"):
+                logger.info(f"Got login URL: {output[:50]}...")
+                return output
+
+            logger.warning(f"Failed to get login URL. stderr: {stderr.decode('utf-8')}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting login URL: {e}")
+            return None
 
     async def cancel(self) -> None:
         """取消当前执行"""
