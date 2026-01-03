@@ -229,6 +229,10 @@ class SandboxAgent:
             "-v", f"{self.container_claude_dir / '.claude.json'}:{container_home}/.claude.json",
         ]
 
+        # 禁用遥测和错误报告
+        docker_args.extend(["-e", "DISABLE_TELEMETRY=1"])
+        docker_args.extend(["-e", "DISABLE_ERROR_REPORTING=1"])
+
         # 传递 API Key 环境变量（如果有）
         if os.environ.get("ANTHROPIC_API_KEY"):
             docker_args.extend(["-e", "ANTHROPIC_API_KEY"])
