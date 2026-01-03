@@ -100,6 +100,76 @@ class CredentialsWatcher:
 credentials_watcher = CredentialsWatcher()
 
 
+class TokenRefresher:
+    """定时刷新 OAuth token
+
+    在宿主机上每小时调用一次 claude -p "ping" 来刷新 token，
+    防止容器内操作导致宿主机 token 过期。
+    """
+
+    def __init__(self, interval_seconds: int = 3600):
+        self._interval = interval_seconds
+        self._task: Optional[asyncio.Task] = None
+
+    async def _refresh_token(self) -> bool:
+        """执行一次 token 刷新"""
+        try:
+            logger.info("Refreshing OAuth token on host...")
+
+            process = await asyncio.create_subprocess_exec(
+                "claude", "-p", "ping", "--output-format", "json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=60
+            )
+
+            if process.returncode == 0:
+                logger.info("Token refresh successful")
+                # 同步到所有容器
+                credentials_watcher._sync_credentials()
+                return True
+            else:
+                stderr_text = stderr.decode() if stderr else ""
+                logger.warning(f"Token refresh failed: {stderr_text}")
+                return False
+
+        except asyncio.TimeoutError:
+            logger.error("Token refresh timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Token refresh error: {e}")
+            return False
+
+    async def _refresh_loop(self) -> None:
+        """定时刷新循环"""
+        logger.info(f"Starting token refresher (interval: {self._interval}s)")
+
+        # 启动时先刷新一次
+        await self._refresh_token()
+
+        while True:
+            await asyncio.sleep(self._interval)
+            await self._refresh_token()
+
+    def start(self) -> None:
+        """启动定时刷新"""
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._refresh_loop())
+
+    def stop(self) -> None:
+        """停止定时刷新"""
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+
+# 全局 token 刷新器
+token_refresher = TokenRefresher()
+
+
 def get_container_name(workspace_id: str, session_id: str) -> str:
     """生成容器名称"""
     hash_input = f"{workspace_id}:{session_id}"

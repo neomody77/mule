@@ -18,7 +18,7 @@ from app.api import workspaces, websocket, cli_sessions, webhook
 from app.services.workspace_manager import workspace_manager
 from app.services.message_store import message_store
 from app.services.plan_monitor import plan_monitor_registry, PLAN_MONITOR_SESSION_ID
-from app.services.sandbox_agent import credentials_watcher
+from app.services.sandbox_agent import credentials_watcher, token_refresher
 
 # 配置日志
 logging.basicConfig(
@@ -97,10 +97,11 @@ async def lifespan(app: FastAPI):
     await plan_monitor_registry.start_all_monitors()
     logger.info(f"Started {len(settings.token_list)} plan monitors")
 
-    # 启动 credentials watcher（仅 sandbox 模式）
+    # 启动 credentials watcher 和 token refresher（仅 sandbox 模式）
     if settings.agent_backend == "sandbox":
         credentials_watcher.start()
-        logger.info("Started credentials watcher for sandbox mode")
+        token_refresher.start()
+        logger.info("Started credentials watcher and token refresher for sandbox mode")
 
     logger.info("Server started successfully")
 
@@ -109,10 +110,11 @@ async def lifespan(app: FastAPI):
     # 关闭时
     logger.info("Shutting down server...")
 
-    # 停止 credentials watcher
+    # 停止 credentials watcher 和 token refresher
     if settings.agent_backend == "sandbox":
         credentials_watcher.stop()
-        logger.info("Stopped credentials watcher")
+        token_refresher.stop()
+        logger.info("Stopped credentials watcher and token refresher")
 
     # 停止所有 plan monitors
     plan_monitor_registry.stop_all_monitors()
