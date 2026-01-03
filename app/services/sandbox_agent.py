@@ -223,8 +223,13 @@ else:
                 if "auth_submitted" in steps_done:
                     lower_text = text.lower()
                     # 检测各种成功信息
-                    if any(x in lower_text for x in ["logged in", "success", "authenticated", "complete"]):
+                    if any(x in lower_text for x in ["logged in", "login successful", "authenticated"]):
                         print("LOGIN_SUCCESS", flush=True)
+                        # 如果显示 "Press Enter to continue"，再按一次 Enter
+                        if "press enter" in lower_text:
+                            time.sleep(0.3)
+                            os.write(master, b"\\r")
+                        time.sleep(1)  # 等待 credentials 写入完成
                         os.kill(pid, 9)
                         sys.exit(0)
                     # 检查是否出现错误
@@ -240,9 +245,12 @@ else:
                 auth_code = sys.stdin.readline().strip()
                 if auth_code:
                     print(f"RECEIVED_CODE:{auth_code[:20]}...", flush=True)
-                    # 确保写入成功
+                    # 写入 auth code 并按 Enter
                     written = os.write(master, (auth_code + "\\r").encode())
                     print(f"WRITTEN_BYTES:{written}", flush=True)
+                    # 等待一下再按一次 Enter 确认提交
+                    time.sleep(0.5)
+                    os.write(master, b"\\r")
                     steps_done.add("auth_submitted")
                     auth_submit_time = time.time()
             except Exception as e:
