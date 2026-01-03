@@ -280,11 +280,10 @@ else:
 
                     if line_text.startswith("URL:"):
                         url = line_text[4:]
-                        # 移除无效 scope 并解码
+                        # 只移除无效 scope，保持 URL 编码
                         url = url.replace("org%3Acreate_api_key+", "")
                         url = url.replace("+org%3Acreate_api_key", "")
-                        import urllib.parse
-                        self._login_url = urllib.parse.unquote(url)
+                        self._login_url = url
 
                     elif line_text == "READY_FOR_CODE":
                         self._ready_for_code = True
