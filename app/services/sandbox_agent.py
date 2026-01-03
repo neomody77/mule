@@ -775,10 +775,12 @@ class SandboxAgent:
             logger.debug(f"Docker exec command: {' '.join(docker_exec)}")
 
             # 启动进程
+            # limit 设置为 128MB，避免大文件内容导致 LimitOverrunError
             self._process = await asyncio.create_subprocess_exec(
                 *docker_exec,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=128 * 1024 * 1024,  # 128MB
             )
 
             # 后台任务持续消费 stderr，避免缓冲区满导致死锁
