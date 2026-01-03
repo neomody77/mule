@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -30,6 +31,7 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
   String _currentPath = '';
   List<FileNode> _files = [];
   bool _isLoading = true;
+  bool _isUploading = false;
   String? _error;
 
   @override
@@ -100,6 +102,74 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
     return _currentPath.split('/');
   }
 
+  Future<void> _uploadFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withData: true,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      setState(() => _isUploading = true);
+
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final file in result.files) {
+        if (file.bytes == null) continue;
+
+        try {
+          await _api.uploadFileWithServer(
+            widget.server,
+            widget.workspaceId,
+            file.bytes!,
+            file.name,
+            path: _currentPath,
+          );
+          successCount++;
+        } catch (e) {
+          failCount++;
+          debugPrint('Failed to upload ${file.name}: $e');
+        }
+      }
+
+      setState(() => _isUploading = false);
+
+      if (mounted) {
+        if (failCount == 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Uploaded $successCount file(s)'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Uploaded $successCount, failed $failCount'),
+              backgroundColor: ZiaOlive.error,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+
+      // 刷新文件列表
+      _loadFiles(_currentPath);
+    } catch (e) {
+      setState(() => _isUploading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload failed: $e'),
+            backgroundColor: ZiaOlive.error,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -117,6 +187,23 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
             }
           },
         ),
+        actions: [
+          if (_isUploading)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.upload_file),
+              tooltip: 'Upload file',
+              onPressed: _uploadFile,
+            ),
+        ],
       ),
       body: Column(
         children: [

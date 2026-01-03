@@ -1,6 +1,6 @@
 """工作区管理 REST API"""
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from pydantic import BaseModel
 
 from app.api.auth import verify_token, resolve_workspace_id
@@ -150,6 +150,44 @@ async def read_file(
         raise HTTPException(status_code=404, detail="File not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{workspace_id}/files/upload")
+async def upload_file(
+    workspace_id: str,
+    file: UploadFile = File(...),
+    path: str = Form(default=""),
+    token: str = Depends(verify_token)
+):
+    """上传文件到工作区
+
+    Args:
+        workspace_id: 工作区 ID
+        file: 上传的文件
+        path: 目标目录路径（相对于工作区根目录）
+    """
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not workspace_manager.workspace_exists(resolved_id):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    try:
+        content = await file.read()
+        file_path = workspace_manager.write_file(
+            resolved_id,
+            path,
+            file.filename,
+            content
+        )
+        return {
+            "success": True,
+            "path": file_path,
+            "filename": file.filename,
+            "size": len(content)
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
 
 @router.get("/{workspace_id}/sessions/{session_id}/messages")
