@@ -3,21 +3,33 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Workspace 视图模式
+enum WorkspaceViewMode {
+  card, // 卡片视图（展开显示 sessions）
+  list, // 列表视图（点击进入详情页）
+}
+
 /// UI 状态（展开状态等）
 class UIState {
   /// workspace 展开状态 (workspaceKey -> isExpanded)
   /// workspaceKey 格式: "serverId:workspaceId"
   final Map<String, bool> workspaceExpanded;
 
+  /// workspace 视图模式
+  final WorkspaceViewMode workspaceViewMode;
+
   const UIState({
     this.workspaceExpanded = const {},
+    this.workspaceViewMode = WorkspaceViewMode.card,
   });
 
   UIState copyWith({
     Map<String, bool>? workspaceExpanded,
+    WorkspaceViewMode? workspaceViewMode,
   }) {
     return UIState(
       workspaceExpanded: workspaceExpanded ?? this.workspaceExpanded,
+      workspaceViewMode: workspaceViewMode ?? this.workspaceViewMode,
     );
   }
 
@@ -43,7 +55,14 @@ class UIStateNotifier extends StateNotifier<UIState> {
         final data = jsonDecode(json) as Map<String, dynamic>;
         final expanded = (data['workspaceExpanded'] as Map<String, dynamic>?)
             ?.map((k, v) => MapEntry(k, v as bool)) ?? {};
-        state = state.copyWith(workspaceExpanded: expanded);
+        final viewModeStr = data['workspaceViewMode'] as String?;
+        final viewMode = viewModeStr == 'list'
+            ? WorkspaceViewMode.list
+            : WorkspaceViewMode.card;
+        state = state.copyWith(
+          workspaceExpanded: expanded,
+          workspaceViewMode: viewMode,
+        );
       }
     } catch (e) {
       // ignore
@@ -56,6 +75,7 @@ class UIStateNotifier extends StateNotifier<UIState> {
       final prefs = await SharedPreferences.getInstance();
       final data = {
         'workspaceExpanded': state.workspaceExpanded,
+        'workspaceViewMode': state.workspaceViewMode.name,
       };
       await prefs.setString(_storageKey, jsonEncode(data));
     } catch (e) {
@@ -92,6 +112,21 @@ class UIStateNotifier extends StateNotifier<UIState> {
   void expandAll(List<String> workspaceKeys) {
     final newExpanded = {for (var key in workspaceKeys) key: true};
     state = state.copyWith(workspaceExpanded: newExpanded);
+    _save();
+  }
+
+  /// 切换视图模式
+  void toggleViewMode() {
+    final newMode = state.workspaceViewMode == WorkspaceViewMode.card
+        ? WorkspaceViewMode.list
+        : WorkspaceViewMode.card;
+    state = state.copyWith(workspaceViewMode: newMode);
+    _save();
+  }
+
+  /// 设置视图模式
+  void setViewMode(WorkspaceViewMode mode) {
+    state = state.copyWith(workspaceViewMode: mode);
     _save();
   }
 }
