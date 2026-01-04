@@ -105,123 +105,157 @@ class TokenRefresher:
 
     策略：
     - 每 10 分钟检查一次 token 过期时间
-    - 如果距离过期 < 1 小时，每 4 分钟调用一次 claude -p "ping" 刷新
+    - 如果距离过期 < 1 小时，直接调用 OAuth refresh API 刷新
     - 刷新成功后同步到所有容器
     """
 
-    # Token 有效期约 8 小时，在最后 1 小时内频繁刷新
+    # Token 有效期约 8 小时，在最后 1 小时内刷新
     REFRESH_THRESHOLD_SECONDS = 3600  # 1 小时
     CHECK_INTERVAL_SECONDS = 600  # 10 分钟检查一次
-    REFRESH_INTERVAL_SECONDS = 240  # 临近过期时 4 分钟刷新一次
+
+    # OAuth API 配置
+    # Reference: https://github.com/RavenStorm-bit/claude-token-refresh
+    CLAUDE_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+    CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
     def __init__(self):
         self._task: Optional[asyncio.Task] = None
 
-    def _get_token_remaining_seconds(self) -> float:
-        """获取 token 剩余有效时间（秒）"""
+    def _get_token_info(self) -> tuple[float, str]:
+        """获取 token 剩余有效时间（秒）和 refresh_token"""
         try:
             import json
             import time
             cred_file = CLAUDE_CREDENTIALS_FILE
             if not cred_file.exists():
-                return 0
+                return 0, ""
 
             with open(cred_file) as f:
                 data = json.load(f)
 
-            expires_at = data.get("claudeAiOauth", {}).get("expiresAt", 0)
+            oauth_data = data.get("claudeAiOauth", {})
+            expires_at = oauth_data.get("expiresAt", 0)
+            refresh_token = oauth_data.get("refreshToken", "")
+
             if not expires_at:
-                return 0
+                return 0, ""
 
             remaining = (expires_at / 1000) - time.time()
-            return max(0, remaining)
+            return max(0, remaining), refresh_token
         except Exception as e:
-            logger.error(f"Error reading token expiry: {e}")
-            return 0
+            logger.error(f"Error reading token info: {e}")
+            return 0, ""
 
     async def _refresh_token(self) -> bool:
-        """执行一次 token 刷新"""
+        """使用 OAuth refresh API 刷新 token"""
+        import time as _time
+        import aiohttp
+
         try:
-            import time as _time
-            old_remaining = self._get_token_remaining_seconds()
+            old_remaining, refresh_token = self._get_token_info()
             old_expiry = _time.time() + old_remaining
 
-            logger.info(f"[TokenRefresh] Calling claude -p ping (token remaining: {old_remaining/60:.0f} min, expires: {_time.strftime('%H:%M:%S', _time.localtime(old_expiry))})")
-
-            process = await asyncio.create_subprocess_exec(
-                "claude", "-p", "ping", "--output-format", "json",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=120
-            )
-
-            stdout_text = stdout.decode() if stdout else ""
-            stderr_text = stderr.decode() if stderr else ""
-
-            if process.returncode == 0:
-                # 解析结果
-                import json
-                try:
-                    result = json.loads(stdout_text)
-                    pong_result = result.get("result", "")
-                    duration_ms = result.get("duration_ms", 0)
-                    logger.info(f"[TokenRefresh] Ping response: '{pong_result}' (took {duration_ms}ms)")
-                except:
-                    logger.info(f"[TokenRefresh] Ping completed")
-
-                new_remaining = self._get_token_remaining_seconds()
-                new_expiry = _time.time() + new_remaining
-
-                # 检查 token 是否被刷新
-                if abs(new_remaining - old_remaining) > 60:  # 超过 1 分钟的变化
-                    logger.info(f"[TokenRefresh] Token REFRESHED! New expiry: {_time.strftime('%Y-%m-%d %H:%M:%S', _time.localtime(new_expiry))} (remaining: {new_remaining/60:.0f} min)")
-                else:
-                    logger.info(f"[TokenRefresh] Token unchanged (remaining: {new_remaining/60:.0f} min)")
-
-                # 同步到所有容器
-                credentials_watcher._sync_credentials()
-                return True
-            else:
-                # 检查是否是 401 错误
-                if "401" in stdout_text or "expired" in stdout_text.lower():
-                    logger.error(f"[TokenRefresh] Token EXPIRED! Need re-login")
-                else:
-                    logger.warning(f"[TokenRefresh] Ping failed: {stderr_text[:200]}")
+            if not refresh_token:
+                logger.error("[TokenRefresh] No refresh token found")
                 return False
 
+            logger.info(f"[TokenRefresh] Calling OAuth refresh API (token remaining: {old_remaining/60:.0f} min, expires: {_time.strftime('%H:%M:%S', _time.localtime(old_expiry))})")
+
+            payload = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self.CLAUDE_CLIENT_ID
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.CLAUDE_TOKEN_URL,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        token_data = await response.json()
+
+                        # 更新 credentials 文件
+                        await self._update_credentials(token_data)
+
+                        new_remaining, _ = self._get_token_info()
+                        new_expiry = _time.time() + new_remaining
+
+                        logger.info(f"[TokenRefresh] Token REFRESHED! New expiry: {_time.strftime('%Y-%m-%d %H:%M:%S', _time.localtime(new_expiry))} (remaining: {new_remaining/60:.0f} min)")
+
+                        # 同步到所有容器
+                        credentials_watcher._sync_credentials()
+                        return True
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"[TokenRefresh] API error: HTTP {response.status} - {error_text[:200]}")
+                        return False
+
         except asyncio.TimeoutError:
-            logger.error("[TokenRefresh] Ping timed out after 120s")
+            logger.error("[TokenRefresh] API request timed out after 30s")
             return False
         except Exception as e:
             logger.error(f"[TokenRefresh] Error: {e}")
             return False
 
+    async def _update_credentials(self, token_data: dict) -> None:
+        """更新 credentials 文件"""
+        import json
+        import time
+
+        cred_file = CLAUDE_CREDENTIALS_FILE
+        if not cred_file.exists():
+            return
+
+        # 读取现有数据
+        with open(cred_file, 'r') as f:
+            data = json.load(f)
+
+        # 更新 OAuth 数据
+        oauth_data = data.get("claudeAiOauth", {})
+
+        # 从响应中获取新 token
+        if "access_token" in token_data:
+            oauth_data["accessToken"] = token_data["access_token"]
+        if "refresh_token" in token_data:
+            oauth_data["refreshToken"] = token_data["refresh_token"]
+        if "expires_in" in token_data:
+            # expires_in 是秒数，转换为毫秒时间戳
+            oauth_data["expiresAt"] = int((time.time() + token_data["expires_in"]) * 1000)
+
+        data["claudeAiOauth"] = oauth_data
+
+        # 写回文件
+        with open(cred_file, 'w') as f:
+            json.dump(data, f, indent=2)
+
+        logger.info(f"[TokenRefresh] Credentials file updated")
+
     async def _refresh_loop(self) -> None:
         """定时刷新循环"""
         import time as _time
-        logger.info("[TokenRefresh] Starting token refresh loop")
+        logger.info("[TokenRefresh] Starting token refresh loop (using OAuth API)")
 
         while True:
             try:
-                remaining = self._get_token_remaining_seconds()
+                remaining, _ = self._get_token_info()
                 expiry = _time.time() + remaining
 
                 if remaining <= 0:
-                    # Token 已过期
-                    logger.warning(f"[TokenRefresh] Token EXPIRED! Need manual re-login. Next check in {self.CHECK_INTERVAL_SECONDS}s")
+                    # Token 已过期，尝试用 refresh_token 刷新
+                    logger.warning("[TokenRefresh] Token EXPIRED! Attempting refresh...")
+                    success = await self._refresh_token()
+                    if not success:
+                        logger.error("[TokenRefresh] Refresh failed, need manual re-login")
                     await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
                     continue
 
                 if remaining < self.REFRESH_THRESHOLD_SECONDS:
-                    # 临近过期，频繁刷新
+                    # 临近过期，刷新 token
                     logger.info(f"[TokenRefresh] Token expiring soon! Remaining: {remaining/60:.0f} min, expires: {_time.strftime('%H:%M:%S', _time.localtime(expiry))}")
                     await self._refresh_token()
-                    logger.info(f"[TokenRefresh] Next refresh in {self.REFRESH_INTERVAL_SECONDS}s")
-                    await asyncio.sleep(self.REFRESH_INTERVAL_SECONDS)
+                    await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
                 else:
                     # 还早，正常检查间隔
                     logger.info(f"[TokenRefresh] Token OK. Remaining: {remaining/60:.0f} min ({remaining/3600:.1f}h), expires: {_time.strftime('%H:%M:%S', _time.localtime(expiry))}. Next check in {self.CHECK_INTERVAL_SECONDS}s")
