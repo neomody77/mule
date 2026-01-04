@@ -546,6 +546,82 @@ class WorkspaceManager:
 
         return file_path.read_text(encoding="utf-8")
 
+    def read_file_binary(self, workspace_id: str, relative_path: str) -> tuple[bytes, str]:
+        """读取文件的二进制内容
+
+        Args:
+            workspace_id: 工作区 ID
+            relative_path: 文件相对路径
+
+        Returns:
+            (文件内容 bytes, MIME 类型)
+        """
+        import mimetypes
+
+        workspace_path = self._get_workspace_path(workspace_id)
+        file_path = (workspace_path / relative_path).resolve()
+
+        # 安全检查
+        if not str(file_path).startswith(str(workspace_path.resolve())):
+            raise ValueError("Path escape attempt")
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {relative_path}")
+
+        if file_path.is_dir():
+            raise ValueError(f"Path is a directory: {relative_path}")
+
+        # 读取文件内容
+        content = file_path.read_bytes()
+
+        # 获取 MIME 类型
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+
+        return content, mime_type
+
+    def write_file(
+        self,
+        workspace_id: str,
+        relative_dir: str,
+        filename: str,
+        content: bytes
+    ) -> str:
+        """写入文件到工作区
+
+        Args:
+            workspace_id: 工作区 ID
+            relative_dir: 相对目录路径
+            filename: 文件名
+            content: 文件内容（bytes）
+
+        Returns:
+            文件的相对路径
+        """
+        workspace_path = self._get_workspace_path(workspace_id)
+        target_dir = (workspace_path / relative_dir).resolve() if relative_dir else workspace_path.resolve()
+
+        # 安全检查：确保目标目录在工作区内
+        if not str(target_dir).startswith(str(workspace_path.resolve())):
+            raise ValueError("Path escape attempt")
+
+        # 确保目标目录存在
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # 构建文件路径
+        file_path = target_dir / filename
+
+        # 再次安全检查
+        if not str(file_path.resolve()).startswith(str(workspace_path.resolve())):
+            raise ValueError("Path escape attempt")
+
+        # 写入文件
+        file_path.write_bytes(content)
+
+        # 返回相对路径
+        return str(file_path.relative_to(workspace_path))
+
     def get_session_id(self, workspace_id: str, agent_session_id: str) -> Optional[str]:
         """获取 Claude Agent session ID"""
         meta = self._load_meta(workspace_id)

@@ -1,7 +1,13 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../config/theme.dart';
 import '../models/file_node.dart';
@@ -30,6 +36,8 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
   String _currentPath = '';
   List<FileNode> _files = [];
   bool _isLoading = true;
+  bool _isUploading = false;
+  bool _isDownloading = false;
   String? _error;
 
   @override
@@ -100,6 +108,112 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
     return _currentPath.split('/');
   }
 
+  Future<void> _uploadFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withData: true,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      setState(() => _isUploading = true);
+
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final file in result.files) {
+        if (file.bytes == null) continue;
+
+        try {
+          await _api.uploadFileWithServer(
+            widget.server,
+            widget.workspaceId,
+            file.bytes!,
+            file.name,
+            path: _currentPath,
+          );
+          successCount++;
+        } catch (e) {
+          failCount++;
+          debugPrint('Failed to upload ${file.name}: $e');
+        }
+      }
+
+      setState(() => _isUploading = false);
+
+      if (mounted) {
+        if (failCount == 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Uploaded $successCount file(s)'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Uploaded $successCount, failed $failCount'),
+              backgroundColor: ZiaOlive.error,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+
+      // 刷新文件列表
+      _loadFiles(_currentPath);
+    } catch (e) {
+      setState(() => _isUploading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload failed: $e'),
+            backgroundColor: ZiaOlive.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadFile(FileNode file) async {
+    if (_isDownloading) return;
+
+    setState(() => _isDownloading = true);
+
+    try {
+      // 下载文件数据
+      final bytes = await _api.downloadFileWithServer(
+        widget.server,
+        widget.workspaceId,
+        file.path,
+      );
+
+      // 保存到临时目录并分享
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/${file.name}');
+      await tempFile.writeAsBytes(bytes);
+
+      setState(() => _isDownloading = false);
+
+      // 使用系统分享功能
+      await Share.shareXFiles(
+        [XFile(tempFile.path)],
+        text: file.name,
+      );
+    } catch (e) {
+      setState(() => _isDownloading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: $e'),
+            backgroundColor: ZiaOlive.error,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -117,6 +231,23 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
             }
           },
         ),
+        actions: [
+          if (_isUploading)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.upload_file),
+              tooltip: 'Upload file',
+              onPressed: _uploadFile,
+            ),
+        ],
       ),
       body: Column(
         children: [
@@ -308,7 +439,20 @@ class _FileManagerScreenState extends ConsumerState<FileManagerScreen> {
             ),
       trailing: file.isDirectory
           ? Icon(Icons.chevron_right, color: ZiaOlive.shade300)
-          : null,
+          : IconButton(
+              icon: _isDownloading
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: ZiaOlive.shade400,
+                      ),
+                    )
+                  : Icon(Icons.download, color: ZiaOlive.shade400),
+              tooltip: 'Download',
+              onPressed: _isDownloading ? null : () => _downloadFile(file),
+            ),
       onTap: () {
         if (file.isDirectory) {
           _navigateToDirectory(file.path);

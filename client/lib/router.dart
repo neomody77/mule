@@ -11,14 +11,20 @@ import 'screens/session_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/file_manager_screen.dart';
 import 'screens/file_viewer_screen.dart';
+import 'screens/workspace_detail_screen.dart';
 
 /// 路由路径常量
 class AppRoutes {
   static const home = '/';
   static const settings = '/settings';
+  static const workspace = '/workspace/:serverId/:workspaceId';
   static const session = '/session/:serverId/:workspaceId/:sessionId';
   static const files = '/files/:serverId/:workspaceId';
   static const fileViewer = '/files/:serverId/:workspaceId/view';
+
+  /// 构建 workspace 详情路径
+  static String workspacePath(String serverId, String workspaceId) =>
+      '/workspace/$serverId/$workspaceId';
 
   /// 构建 session 路径
   static String sessionPath(String serverId, String workspaceId, String sessionId) =>
@@ -51,6 +57,36 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.settings,
         name: 'settings',
         builder: (context, state) => const SettingsScreen(),
+      ),
+
+      // Workspace 详情页（列表模式）
+      GoRoute(
+        path: AppRoutes.workspace,
+        name: 'workspace',
+        builder: (context, state) {
+          final serverId = state.pathParameters['serverId']!;
+          final workspaceId = state.pathParameters['workspaceId']!;
+
+          final container = ProviderScope.containerOf(context);
+          final serverState = container.read(serverProvider);
+          final server = serverState.getServer(serverId);
+
+          if (server == null) {
+            return const HomeScreen();
+          }
+
+          final workspaces = serverState.getWorkspaces(serverId);
+          final workspace = workspaces.where((w) => w.id == workspaceId).firstOrNull;
+
+          if (workspace == null) {
+            return const HomeScreen();
+          }
+
+          return WorkspaceDetailScreen(
+            server: server,
+            workspace: workspace,
+          );
+        },
       ),
 
       // Session 页面
