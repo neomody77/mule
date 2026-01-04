@@ -166,6 +166,83 @@ class ApiService {
     return response.data['content'];
   }
 
+  /// 上传文件到工作区
+  Future<Map<String, dynamic>> uploadFile(
+    String workspaceId,
+    String filePath,
+    List<int> fileBytes,
+    String fileName, {
+    String path = '',
+  }) async {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
+      'path': path,
+    });
+
+    final response = await _dio.post(
+      '$_baseUrl/api/workspaces/$workspaceId/files/upload',
+      data: formData,
+    );
+    return response.data;
+  }
+
+  /// 上传文件到工作区（使用指定服务器配置）
+  Future<Map<String, dynamic>> uploadFileWithServer(
+    ServerConfig server,
+    String workspaceId,
+    List<int> fileBytes,
+    String fileName, {
+    String path = '',
+  }) async {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
+      'path': path,
+    });
+
+    final response = await _dio.post(
+      '${server.httpBaseUrl}/api/workspaces/$workspaceId/files/upload',
+      data: formData,
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer ${server.token}',
+          'X-API-Token': server.token,
+        },
+      ),
+    );
+    return response.data;
+  }
+
+  /// 下载文件（返回字节数据）
+  Future<List<int>> downloadFile(
+    String workspaceId,
+    String filePath,
+  ) async {
+    final response = await _dio.get<List<int>>(
+      '$_baseUrl/api/workspaces/$workspaceId/files/$filePath/download',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return response.data!;
+  }
+
+  /// 下载文件（使用指定服务器配置）
+  Future<List<int>> downloadFileWithServer(
+    ServerConfig server,
+    String workspaceId,
+    String filePath,
+  ) async {
+    final response = await _dio.get<List<int>>(
+      '${server.httpBaseUrl}/api/workspaces/$workspaceId/files/$filePath/download',
+      options: Options(
+        responseType: ResponseType.bytes,
+        headers: {
+          'Authorization': 'Bearer ${server.token}',
+          'X-API-Token': server.token,
+        },
+      ),
+    );
+    return response.data!;
+  }
+
   // ==================== Session API ====================
 
   /// 列出工作区下的所有 sessions

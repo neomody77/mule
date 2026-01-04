@@ -1,6 +1,7 @@
 """工作区管理 REST API"""
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.api.auth import verify_token, resolve_workspace_id
@@ -146,6 +147,77 @@ async def read_file(
     try:
         content = workspace_manager.read_file(resolved_id, file_path)
         return {"path": file_path, "content": content}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{workspace_id}/files/upload")
+async def upload_file(
+    workspace_id: str,
+    file: UploadFile = File(...),
+    path: str = Form(default=""),
+    token: str = Depends(verify_token)
+):
+    """上传文件到工作区
+
+    Args:
+        workspace_id: 工作区 ID
+        file: 上传的文件
+        path: 目标目录路径（相对于工作区根目录）
+    """
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not workspace_manager.workspace_exists(resolved_id):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    try:
+        content = await file.read()
+        file_path = workspace_manager.write_file(
+            resolved_id,
+            path,
+            file.filename,
+            content
+        )
+        return {
+            "success": True,
+            "path": file_path,
+            "filename": file.filename,
+            "size": len(content)
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+
+@router.get("/{workspace_id}/files/{file_path:path}/download")
+async def download_file(
+    workspace_id: str,
+    file_path: str,
+    token: str = Depends(verify_token)
+):
+    """下载文件（返回原始二进制内容）
+
+    Args:
+        workspace_id: 工作区 ID
+        file_path: 文件路径
+    """
+    resolved_id = resolve_workspace_id(workspace_id, token)
+    if not workspace_manager.workspace_exists(resolved_id):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    try:
+        content, mime_type = workspace_manager.read_file_binary(resolved_id, file_path)
+        filename = file_path.split('/')[-1]
+        return Response(
+            content=content,
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(content)),
+            }
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found")
     except ValueError as e:

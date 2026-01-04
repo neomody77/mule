@@ -706,6 +706,31 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   }
 
   void _compactContext() {
+    final session = ref.read(sessionProvider).getSession(_sessionId);
+    if (session == null) return;
+
+    // 防抖：正在压缩中时忽略
+    if (session.isCompacting) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Compacting in progress...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+
+    // 检查是否有消息可以压缩
+    if (session.messages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No messages to compact'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+
     ref.read(sessionProvider.notifier).compactContext(_sessionId);
   }
 
