@@ -1,6 +1,12 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../config/theme.dart';
 import '../models/file_node.dart';
@@ -30,6 +36,8 @@ class _FileDrawerState extends State<FileDrawer> {
   List<FileNode> _files = [];
   bool _isLoading = true;
   String? _error;
+  bool _isUploading = false;
+  bool _isDownloading = false;
 
   @override
   void initState() {
@@ -82,6 +90,83 @@ class _FileDrawerState extends State<FileDrawer> {
       file.path,
       file.name,
     ));
+  }
+
+  Future<void> _uploadFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles();
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      if (file.bytes == null && file.path == null) {
+        _showSnackBar('Cannot read file');
+        return;
+      }
+
+      setState(() => _isUploading = true);
+
+      List<int> bytes;
+      if (file.bytes != null) {
+        bytes = file.bytes!;
+      } else {
+        bytes = await File(file.path!).readAsBytes();
+      }
+
+      await _api.uploadFileWithServer(
+        widget.server,
+        widget.workspaceId,
+        bytes,
+        file.name,
+        path: _currentPath,
+      );
+
+      _showSnackBar('Uploaded: ${file.name}');
+      _loadFiles(_currentPath);
+    } catch (e) {
+      _showSnackBar('Upload failed: $e');
+    } finally {
+      setState(() => _isUploading = false);
+    }
+  }
+
+  Future<void> _downloadFile(FileNode file) async {
+    try {
+      setState(() => _isDownloading = true);
+
+      final bytes = await _api.downloadFileWithServer(
+        widget.server,
+        widget.workspaceId,
+        file.path,
+      );
+
+      if (kIsWeb) {
+        // Web: use share
+        final xFile = XFile.fromData(
+          Uint8List.fromList(bytes),
+          name: file.name,
+          mimeType: 'application/octet-stream',
+        );
+        await Share.shareXFiles([xFile], text: file.name);
+      } else {
+        // Mobile: save to temp and share
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/${file.name}');
+        await tempFile.writeAsBytes(bytes);
+        await Share.shareXFiles([XFile(tempFile.path)], text: file.name);
+      }
+
+      _showSnackBar('Downloaded: ${file.name}');
+    } catch (e) {
+      _showSnackBar('Download failed: $e');
+    } finally {
+      setState(() => _isDownloading = false);
+    }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
   }
 
   List<String> get _pathParts {
@@ -150,6 +235,17 @@ class _FileDrawerState extends State<FileDrawer> {
               ),
             ),
           ),
+          _isUploading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.upload_file, size: 20),
+                  onPressed: _uploadFile,
+                  tooltip: 'Upload',
+                ),
           IconButton(
             icon: const Icon(Icons.refresh, size: 20),
             onPressed: () => _loadFiles(_currentPath),
@@ -329,7 +425,19 @@ class _FileDrawerState extends State<FileDrawer> {
             ),
       trailing: file.isDirectory
           ? Icon(Icons.chevron_right, size: 18, color: ZiaOlive.shade300)
-          : null,
+          : IconButton(
+              icon: _isDownloading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(Icons.download, size: 18, color: ZiaOlive.shade400),
+              onPressed: _isDownloading ? null : () => _downloadFile(file),
+              tooltip: 'Download',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
       onTap: () {
         if (file.isDirectory) {
           _navigateToDirectory(file.path);

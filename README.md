@@ -1,109 +1,147 @@
 # Mule
 
-移动端远程编码平台 - 通过手机/iPad 连接服务器使用 Claude Agent 进行代码操作
+Mobile remote coding platform - Access Claude Agent from your phone/iPad to perform code operations on a remote server.
 
-## 项目结构
+[中文版](README_CN.md)
+
+## Why Mule?
+
+**Code while walking** — That's the motivation behind this project.
+
+Most of the time, vibe coding just needs you to pull the AI back on track when it goes astray. The ideal scenario: give it a computer, let it work on its own, and just check in occasionally.
+
+There was a similar community project [happy](https://github.com/slopus/happy), but it became incompatible after Claude Code updates. Fortunately, the official SDK was released, and this project was born.
+
+**Mule** — A tool built with Claude Code, to squeeze more out of Claude Code.
+
+## Architecture
+
+```
+┌──────────────┐     Cloudflare      ┌──────────────────────────┐
+│   Mobile     │ ◄── Tunnel ──────►  │   Linux Dev Machine      │
+│   Client     │                     │  ┌────────────────────┐  │
+│  (Flutter)   │                     │  │   Mule Backend     │  │
+└──────────────┘                     │  │   (FastAPI)        │  │
+                                     │  └─────────┬──────────┘  │
+                                     │            │             │
+                                     │  ┌─────────▼──────────┐  │
+                                     │  │  Docker Sandbox    │  │
+                                     │  │  (Claude Code)     │  │
+                                     │  └────────────────────┘  │
+                                     └──────────────────────────┘
+```
+
+- **Backend**: Deployed on Linux dev machine, FastAPI provides API and WebSocket
+- **Client**: Flutter mobile app (also supports PWA via web)
+- **Security Isolation**: Docker container isolates code execution environment
+- **Tunnel**: Cloudflare Tunnel exposes the service
+
+## Design Philosophy
+
+Human interaction doesn't consume many resources — humans are the bottleneck. Heavy computation should be offloaded to the cloud/backend.
+
+## Project Structure
 
 ```
 mule/
-├── app/                 # Python FastAPI 服务端
-│   ├── main.py         # 应用入口
-│   ├── config.py       # 配置管理
+├── app/                 # Python FastAPI server
+│   ├── main.py         # Application entry
+│   ├── config.py       # Configuration
 │   ├── api/
-│   │   ├── websocket.py    # WebSocket 处理
-│   │   ├── workspaces.py   # 工作区 API
-│   │   └── auth.py         # 认证
+│   │   ├── websocket.py    # WebSocket handling
+│   │   ├── workspaces.py   # Workspace API
+│   │   └── auth.py         # Authentication
 │   └── services/
-│       ├── claude_agent.py     # Claude Agent 封装
-│       ├── adk_agent.py        # Google ADK 封装
-│       ├── sandbox_agent.py    # Docker 隔离执行
-│       ├── task_manager.py     # 任务队列管理
-│       ├── message_store.py    # 消息持久化
+│       ├── claude_agent.py     # Claude Agent wrapper
+│       ├── adk_agent.py        # Google ADK wrapper
+│       ├── sandbox_agent.py    # Docker isolated execution
+│       ├── task_manager.py     # Task queue management
+│       ├── message_store.py    # Message persistence
 │       └── workspace_manager.py
 │
-├── client/              # Flutter 客户端
+├── client/              # Flutter client
 │   ├── lib/
 │   │   ├── main.dart
 │   │   ├── config/
 │   │   ├── models/
 │   │   ├── services/
-│   │   ├── providers/      # Riverpod 状态管理
+│   │   ├── providers/      # Riverpod state management
 │   │   ├── screens/
 │   │   └── widgets/
 │   └── pubspec.yaml
 │
-├── cli/                 # CLI 工具
-│   └── mule_cli/       # 终端远程同步
+├── cli/                 # CLI tool
+│   └── mule_cli/       # Terminal remote sync
 │
-└── docker/             # Docker 配置
+└── docker/             # Docker configuration
     ├── Dockerfile.workspace
     └── entrypoint-workspace.sh
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 服务端启动
+### 1. Start the Server
 
 ```bash
-# 创建虚拟环境
+# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
-# 安装依赖 (推荐使用 uv)
+# Install dependencies (uv recommended)
 uv pip install -e . --python .venv/bin/python
 
-# 复制并配置环境变量
+# Copy and configure environment variables
 cp .env.example .env
-# 编辑 .env 设置:
+# Edit .env to set:
 # - ANTHROPIC_API_KEY: Claude API Key
-# - API_TOKENS: 访问认证 Token (逗号分隔多个)
-# - WORKSPACE_BASE_DIR: 工作区根目录
+# - API_TOKENS: Authentication tokens (comma-separated)
+# - WORKSPACE_BASE_DIR: Workspace root directory
 
-# 启动服务
+# Start the server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 2. Flutter 客户端
+### 2. Flutter Client
 
 ```bash
 cd client
 
-# 安装依赖
+# Install dependencies
 flutter pub get
 
-# 运行 (模拟器或真机)
+# Run (simulator or device)
 flutter run
 
-# 构建 Web 版本
+# Build web version
 flutter build web
 
-# 构建 Android APK
+# Build Android APK
 flutter build apk --release
 ```
 
-### 3. 配置连接
+### 3. Configure Connection
 
-在 App 设置页面配置:
-- **Server Host**: 服务器地址 (如 `192.168.1.100:8000`)
-- **API Token**: 与服务端 `.env` 中的 `API_TOKENS` 一致
-- **Use HTTPS**: 生产环境建议开启
+In the App settings page:
+- **Server Host**: Server address (e.g., `192.168.1.100:8000`)
+- **API Token**: Must match `API_TOKENS` in server's `.env`
+- **Use HTTPS**: Recommended for production
 
-## 功能特性
+## Features
 
-- **多工作区管理** - 隔离不同项目
-- **实时流式响应** - WebSocket 双向通信
-- **跨设备会话同步** - 多客户端实时同步消息和状态
-- **代码文件操作** - 读/写/搜索文件
-- **Shell 命令执行** - 运行终端命令
-- **会话历史保存** - 消息持久化存储
-- **多 Agent 后端支持**:
-  - Claude Agent SDK (默认)
+- **Multi-workspace Management** - Isolate different projects
+- **Real-time Streaming** - WebSocket bidirectional communication
+- **Cross-device Session Sync** - Real-time sync of messages and state across clients
+- **Code File Operations** - Read/write/search files
+- **Shell Command Execution** - Run terminal commands
+- **Session History** - Persistent message storage
+- **Multiple Agent Backends**:
+  - Claude Agent SDK (default)
   - Google ADK (Gemini)
-  - Docker 隔离执行
+  - Docker isolated execution
 
-## Agent 后端配置
+## Agent Backend Configuration
 
-### Claude Agent (默认)
+### Claude Agent (Default)
 ```bash
 AGENT_BACKEND=claude
 ANTHROPIC_API_KEY=your_key
@@ -116,67 +154,67 @@ GOOGLE_API_KEY=your_key
 ADK_MODEL=gemini-2.0-flash
 ```
 
-### Docker 隔离模式 (Linux)
+### Docker Isolation Mode (Linux)
 ```bash
 AGENT_BACKEND=sandbox
-# 需要先构建镜像: docker build -t mule-workspace:latest -f docker/Dockerfile.workspace .
+# Build image first: docker build -t mule-workspace:latest -f docker/Dockerfile.workspace .
 ```
 
-Docker 隔离模式在 Linux 主机上会自动使用宿主机的 Claude 登录信息：
+Docker isolation mode automatically uses the host's Claude login credentials on Linux:
 
-**认证文件挂载策略：**
-- `~/.claude/.credentials.json` → 只读挂载到容器（OAuth token，自动同步更新）
-- `~/.claude.json` → 复制到容器专属目录（Claude 需要写入）
-- `~/.claude/` 目录 → 每个容器独立副本（避免 projects/ 冲突）
+**Authentication File Mounting Strategy:**
+- `~/.claude/.credentials.json` → Read-only mount to container (OAuth token, auto-synced)
+- `~/.claude.json` → Copied to container-specific directory (Claude needs write access)
+- `~/.claude/` directory → Independent copy per container (avoids projects/ conflicts)
 
-**前置条件：**
-1. 宿主机已通过 `claude` 命令登录（存在 `~/.claude/.credentials.json`）
-2. 容器以宿主机用户身份运行（自动处理文件权限）
+**Prerequisites:**
+1. Host has logged in via `claude` command (`~/.claude/.credentials.json` exists)
+2. Container runs as host user (handles file permissions automatically)
 
-**工作原理：**
+**How it works:**
 ```
-宿主机                          容器
-~/.claude/.credentials.json  →  /home/user/.claude/.credentials.json (只读)
-~/.claude.json               →  /home/user/.claude.json (复制)
-data/containers/{id}/.claude →  /home/user/.claude/ (可读写)
+Host                              Container
+~/.claude/.credentials.json  →  /home/user/.claude/.credentials.json (read-only)
+~/.claude.json               →  /home/user/.claude.json (copied)
+data/containers/{id}/.claude →  /home/user/.claude/ (read-write)
 workspaces/{id}              →  /workspace
 ```
 
-这样容器内的 Claude Code 可以直接使用宿主机的登录状态，无需在容器内重新登录。
+This allows Claude Code in the container to use the host's login state without re-authentication.
 
-**GitHub CLI 配置传递（可选）：**
+**GitHub CLI Configuration (Optional):**
 ```bash
 SHARE_GH_CONFIG=true
 ```
-启用后会将宿主机的 `~/.config/gh/` 目录只读挂载到容器，允许容器内使用 `gh` 命令操作 GitHub（创建 PR、管理 issues 等）。前提是宿主机已通过 `gh auth login` 登录。
+When enabled, mounts the host's `~/.config/gh/` directory read-only to the container, allowing `gh` commands for GitHub operations (create PRs, manage issues, etc.). Requires `gh auth login` on the host first.
 
-## WebSocket 协议
+## WebSocket Protocol
 
-统一端点: `/ws`
+Unified endpoint: `/ws`
 
-### 客户端事件
-- `subscribe` - 订阅 session
-- `unsubscribe` - 取消订阅
-- `prompt` - 发送提示 (支持排队)
-- `sync` - 同步当前状态
-- `cancel` - 取消运行中的任务
+### Client Events
+- `subscribe` - Subscribe to session
+- `unsubscribe` - Unsubscribe
+- `prompt` - Send prompt (queued if task running)
+- `sync` - Sync current state
+- `cancel` - Cancel running task
 
-### 服务端事件
-- `subscribed` - 订阅成功
+### Server Events
+- `subscribed` - Subscription successful
 - `task_started` / `task_completed` / `task_failed`
-- `content` / `tool_use` / `tool_result` - Agent 响应
-- `user_message` - 用户消息同步 (跨设备)
+- `content` / `tool_use` / `tool_result` - Agent responses
+- `user_message` - User message sync (cross-device)
 
-## 安全注意事项
+## Security Notes
 
-1. 生产环境请务必修改默认 Token
-2. 建议配置 HTTPS/WSS
-3. 工作区目录隔离，防止路径逃逸
-4. Docker 隔离模式提供额外安全层
+1. Always change default tokens in production
+2. Configure HTTPS/WSS recommended
+3. Workspace directory isolation prevents path traversal
+4. Docker isolation mode provides additional security layer
 
-## API 文档
+## API Documentation
 
-启动服务后访问: `http://localhost:8000/docs`
+After starting the server, visit: `http://localhost:8000/docs`
 
 ## License
 
