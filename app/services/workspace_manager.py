@@ -546,6 +546,41 @@ class WorkspaceManager:
 
         return file_path.read_text(encoding="utf-8")
 
+    def read_file_binary(self, workspace_id: str, relative_path: str) -> tuple[bytes, str]:
+        """读取文件的二进制内容
+
+        Args:
+            workspace_id: 工作区 ID
+            relative_path: 文件相对路径
+
+        Returns:
+            (文件内容 bytes, MIME 类型)
+        """
+        import mimetypes
+
+        workspace_path = self._get_workspace_path(workspace_id)
+        file_path = (workspace_path / relative_path).resolve()
+
+        # 安全检查
+        if not str(file_path).startswith(str(workspace_path.resolve())):
+            raise ValueError("Path escape attempt")
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {relative_path}")
+
+        if file_path.is_dir():
+            raise ValueError(f"Path is a directory: {relative_path}")
+
+        # 读取文件内容
+        content = file_path.read_bytes()
+
+        # 获取 MIME 类型
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+
+        return content, mime_type
+
     def write_file(
         self,
         workspace_id: str,

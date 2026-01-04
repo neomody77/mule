@@ -212,6 +212,37 @@ class ApiService {
     return response.data;
   }
 
+  /// 下载文件（返回字节数据）
+  Future<List<int>> downloadFile(
+    String workspaceId,
+    String filePath,
+  ) async {
+    final response = await _dio.get<List<int>>(
+      '$_baseUrl/api/workspaces/$workspaceId/files/$filePath/download',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return response.data!;
+  }
+
+  /// 下载文件（使用指定服务器配置）
+  Future<List<int>> downloadFileWithServer(
+    ServerConfig server,
+    String workspaceId,
+    String filePath,
+  ) async {
+    final response = await _dio.get<List<int>>(
+      '${server.httpBaseUrl}/api/workspaces/$workspaceId/files/$filePath/download',
+      options: Options(
+        responseType: ResponseType.bytes,
+        headers: {
+          'Authorization': 'Bearer ${server.token}',
+          'X-API-Token': server.token,
+        },
+      ),
+    );
+    return response.data!;
+  }
+
   // ==================== Session API ====================
 
   /// 列出工作区下的所有 sessions
