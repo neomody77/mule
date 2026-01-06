@@ -11,6 +11,8 @@ Mule CLI - 通过后端 WebSocket 执行 Claude Agent
     mule "你的提示"
     mule --server http://192.168.1.100:8080 --workspace my-project "你的提示"
     mule --interactive
+    mule handoff              # 将当前 Claude Code 会话接手到 Mule
+    mule handoff --no-start   # 只准备，不自动启动
 """
 import argparse
 import asyncio
@@ -18,12 +20,10 @@ import json
 import logging
 import os
 import sys
-from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin
 
 import websockets
-from websockets.client import WebSocketClientProtocol
+from websockets import ClientConnection
 
 # 配置日志
 logging.basicConfig(
@@ -48,7 +48,7 @@ class MuleCLI:
         self.workspace_id = workspace_id
         self.session_id = session_id or self._generate_session_id()
 
-        self._ws: Optional[WebSocketClientProtocol] = None
+        self._ws: Optional[ClientConnection] = None
         self._is_connected = False
         self._is_running = False
         self._current_text = ""
@@ -182,11 +182,11 @@ class MuleCLI:
             status_type = data.get("type", "")
             message = data.get("message", "")
             if status_type == "thinking":
-                print(f"\n[思考中...]", flush=True)
+                print("\n[思考中...]", flush=True)
             elif status_type == "task_start":
-                print(f"\n[开始执行]", flush=True)
+                print("\n[开始执行]", flush=True)
             elif status_type == "cancelled":
-                print(f"\n[已取消]", flush=True)
+                print("\n[已取消]", flush=True)
 
         elif event == "message_end":
             session_id = data.get("session_id", "")
@@ -311,6 +311,8 @@ def main():
   mule --server http://192.168.1.100:8080 "你的提示"
   mule --workspace my-project "你的提示"
   mule --interactive
+  mule handoff              # 接手当前 Claude Code 会话
+  mule handoff --no-start   # 只准备，不自动启动
 
 环境变量:
   MULE_SERVER    - Mule 服务器地址 (如 http://192.168.1.100:8080)
@@ -319,6 +321,45 @@ def main():
         """
     )
 
+    # 子命令
+    subparsers = parser.add_subparsers(dest='command', help='可用命令')
+
+    # handoff 子命令
+    handoff_parser = subparsers.add_parser(
+        'handoff',
+        help='将当前 Claude Code 会话接手到 Mule'
+    )
+    handoff_parser.add_argument(
+        '-s', '--server',
+        default=os.getenv('MULE_SERVER', 'http://localhost:8080'),
+        help='Mule 服务器地址'
+    )
+    handoff_parser.add_argument(
+        '-t', '--token',
+        default=os.getenv('MULE_TOKEN', ''),
+        help='认证 token'
+    )
+    handoff_parser.add_argument(
+        '-w', '--workspace',
+        default=os.getenv('MULE_WORKSPACE', 'default'),
+        help='Workspace ID'
+    )
+    handoff_parser.add_argument(
+        '-p', '--project',
+        help='项目目录路径（默认当前目录）'
+    )
+    handoff_parser.add_argument(
+        '--no-start',
+        action='store_true',
+        help='不自动启动会话'
+    )
+    handoff_parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='详细输出'
+    )
+
+    # 主命令参数
     parser.add_argument(
         'prompt',
         nargs='?',
@@ -355,6 +396,25 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # 处理 handoff 子命令
+    if args.command == 'handoff':
+        if not args.token:
+            print("错误: 需要认证 token (--token 或 MULE_TOKEN 环境变量)", file=sys.stderr)
+            sys.exit(1)
+
+        from .handoff import run_handoff
+        result = asyncio.run(run_handoff(
+            server_url=args.server,
+            token=args.token,
+            workspace_id=args.workspace,
+            project_dir=args.project,
+            auto_start=not args.no_start,
+            verbose=args.verbose,
+        ))
+        if not result:
+            sys.exit(1)
+        return
 
     # 检查必需参数
     if not args.token:
