@@ -11,6 +11,7 @@ pydantic-settings>=2.1.0
 
 # Claude SDK
 anthropic>=0.40.0
+claude-agent-sdk>=0.0.8
 
 # 工具
 python-dotenv>=1.0.0

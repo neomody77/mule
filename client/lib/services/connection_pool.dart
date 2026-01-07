@@ -368,6 +368,28 @@ class ConnectionPool {
     });
   }
 
+  /// 发送带图片的提示消息
+  void sendPromptWithImage(
+    String sessionId,
+    String content,
+    String imageBase64,
+    String mediaType,
+  ) {
+    final sub = _findSubscription(sessionId);
+    if (sub == null) return;
+
+    _sendToServer(sub.serverId, {
+      'type': 'prompt',
+      'workspace_id': sub.workspaceId,
+      'session_id': sub.sessionId,
+      'content': content,
+      'image': {
+        'data': imageBase64,
+        'media_type': mediaType,
+      },
+    });
+  }
+
   /// 发送取消请求
   void sendCancel(String sessionId) {
     final sub = _findSubscription(sessionId);
