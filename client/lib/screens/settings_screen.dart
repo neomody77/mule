@@ -14,9 +14,7 @@ import '../providers/providers.dart';
 import '../router.dart';
 import '../widgets/command_target.dart';
 import 'trash_screen.dart';
-
-// Web-specific imports
-import 'dart:html' if (dart.library.io) 'settings_screen_stub.dart' as html;
+import '../utils/web_utils.dart' as web_utils;
 
 /// 服务器配置 JSON 格式
 /// {
@@ -326,26 +324,11 @@ class SettingsScreen extends ConsumerWidget {
     if (!kIsWeb) return;
 
     try {
-      // Show loading indicator
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Clearing cache...')),
       );
 
-      // Unregister service workers and clear caches using JS interop
-      await html.window.navigator.serviceWorker?.getRegistrations().then((registrations) async {
-        for (final registration in registrations) {
-          await registration.unregister();
-        }
-      });
-
-      // Clear caches
-      final cacheStorage = html.window.caches;
-      if (cacheStorage != null) {
-        final keys = await cacheStorage.keys();
-        for (final key in keys) {
-          await cacheStorage.delete(key);
-        }
-      }
+      await web_utils.clearBrowserCache();
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -354,9 +337,8 @@ class SettingsScreen extends ConsumerWidget {
         );
       }
 
-      // Reload the page after a short delay
       await Future.delayed(const Duration(milliseconds: 500));
-      html.window.location.reload();
+      web_utils.reloadPage();
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -899,43 +881,7 @@ class _ServerFormSheetState extends ConsumerState<_ServerFormSheet> {
 
   /// 从当前页面 URL 获取服务器默认配置（仅 PWA/Web 模式）
   static ({String name, String host, int port, bool useHttps})? _getDefaultsFromUrl() {
-    if (!kIsWeb) return null;
-
-    try {
-      final location = html.window.location;
-      // ignore: unnecessary_cast - 使用 as dynamic 避免平台差异导致的 null 检查问题
-      final protocol = (location.protocol as dynamic)?.toString() ?? '';
-      final hostname = (location.hostname as dynamic)?.toString() ?? '';
-      final portStr = (location.port as dynamic)?.toString() ?? '';
-
-      if (hostname.isEmpty) return null;
-
-      // 解析端口，如果为空则使用默认端口
-      int port = 8080;
-      if (portStr.isNotEmpty) {
-        port = int.tryParse(portStr) ?? 8080;
-      } else {
-        // 没有端口时，根据协议使用默认端口
-        port = protocol == 'https:' ? 443 : 80;
-      }
-
-      final useHttps = protocol == 'https:';
-
-      // 生成服务器名称
-      String name = hostname;
-      if (hostname.contains('.')) {
-        // 使用域名的第一部分作为名称
-        name = hostname.split('.').first;
-      }
-      // 首字母大写
-      if (name.isNotEmpty) {
-        name = name[0].toUpperCase() + name.substring(1);
-      }
-
-      return (name: name, host: hostname, port: port, useHttps: useHttps);
-    } catch (e) {
-      return null;
-    }
+    return web_utils.getUrlDefaults();
   }
 
   @override

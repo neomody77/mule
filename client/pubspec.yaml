@@ -41,6 +41,9 @@ dependencies:
 
   # URL 启动器
   url_launcher: ^6.2.5
+
+  # Web platform APIs (for SkWasm compatibility)
+  web: ^1.0.0
   http: ^1.6.0
   mobile_scanner: ^7.1.4
 

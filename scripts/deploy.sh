@@ -42,11 +42,10 @@ class BuildInfo {
 DART
 echo "  v$VERSION ($GIT_COMMIT) @ $BUILD_TIME"
 
-# Step 3: Build Flutter web
-# Note: Using canvaskit renderer. SkWasm requires migrating dart:html to package:web
-echo "[3/5] Building Flutter web..."
+# Step 3: Build Flutter web with SkWasm
+echo "[3/5] Building Flutter web (SkWasm)..."
 cd client
-flutter build web
+flutter build web --wasm
 cd ..
 
 # Step 4: Copy to static directory
