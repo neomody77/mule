@@ -177,7 +177,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  void _showNewSessionDialog({String? serverId, String? workspaceId, String? workspaceName}) {
+  void _showNewSessionDialog({String? serverId, String? workspaceId, String? workspaceName}) async {
     final serverState = ref.read(serverProvider);
 
     if (serverState.servers.isEmpty) {
@@ -185,6 +185,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return;
     }
 
+    // 如果已经指定了 server 和 workspace，直接创建 session
+    if (serverId != null && workspaceId != null) {
+      final session = await ref.read(sessionProvider.notifier).createSession(
+        serverId: serverId,
+        workspaceId: workspaceId,
+        workspaceName: workspaceName ?? workspaceId,
+        name: null, // 自动使用 ID 前 8 位
+      );
+
+      if (mounted) {
+        ref.read(sessionProvider.notifier).setActiveSession(session.id);
+        context.push(AppRoutes.sessionPath(serverId, workspaceId, session.id));
+      }
+      return;
+    }
+
+    // 否则显示选择表单
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
