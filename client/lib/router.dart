@@ -41,6 +41,9 @@ class AppRoutes {
 
 /// GoRouter provider
 final routerProvider = Provider<GoRouter>((ref) {
+  // 让 push/pop 也更新 URL（GoRouter 8.0+ 默认关闭）
+  GoRouter.optionURLReflectsImperativeAPIs = true;
+
   return GoRouter(
     initialLocation: AppRoutes.home,
     debugLogDiagnostics: true,
