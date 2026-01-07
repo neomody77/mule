@@ -297,6 +297,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                       onTap: _showRenameDialog,
                       child: Icon(Icons.edit, size: 16, color: ZiaOlive.shade300),
                     ),
+                    const SizedBox(width: 4),
+                    GestureDetector(
+                      onTap: _generateTitle,
+                      child: Icon(Icons.auto_awesome, size: 16, color: ZiaOlive.shade300),
+                    ),
                   ],
                 ),
           actions: [
@@ -771,6 +776,30 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     }
 
     ref.read(sessionProvider.notifier).compactContext(_sessionId);
+  }
+
+  void _generateTitle() {
+    final session = ref.read(sessionProvider).getSession(_sessionId);
+    if (session == null) return;
+
+    // 检查是否有消息
+    if (session.messages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No messages to generate title from'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+
+    ref.read(sessionProvider.notifier).generateTitle(_sessionId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Generating title...'),
+        duration: Duration(seconds: 1),
+      ),
+    );
   }
 
   void _confirmClearMessages() {

@@ -884,6 +884,57 @@ async def _handle_request_handoff(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+async def _handle_generate_title(ctx: MessageHandlerContext) -> bool:
+    """
+    手动触发 AI 生成会话标题
+
+    客户端消息格式:
+    {
+        "type": "generate_title",
+        "workspace_id": "...",
+        "session_id": "..."
+    }
+    """
+    if not ctx.workspace_id or not ctx.session_id:
+        await manager.send_to_connection(ctx.conn_id, {
+            "event": "error",
+            "data": {"message": "workspace_id and session_id required"}
+        })
+        return True
+
+    # 获取会话消息历史
+    messages = message_store.get_messages(ctx.workspace_id, ctx.session_id)
+    if not messages:
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": "No messages in session"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+        return True
+
+    try:
+        title = await generate_session_title(messages=messages)
+        if title:
+            workspace_manager.set_session_title(ctx.workspace_id, ctx.session_id, title)
+            await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+                "event": "session_title_updated",
+                "data": {"title": title}
+            }, display_workspace_id=ctx.raw_workspace_id)
+            logger.info(f"Generated title for {ctx.workspace_id}:{ctx.session_id}: {title}")
+        else:
+            await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+                "event": "error",
+                "data": {"message": "Failed to generate title"}
+            }, display_workspace_id=ctx.raw_workspace_id)
+    except Exception as e:
+        logger.error(f"Failed to generate title: {e}")
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": f"Failed to generate title: {e}"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+    return True
+
+
 # 消息处理器映射
 _MESSAGE_HANDLERS: Dict[str, Any] = {
     "ping": _handle_ping,
@@ -901,6 +952,8 @@ _MESSAGE_HANDLERS: Dict[str, Any] = {
     "switch_mode": _handle_switch_mode,
     "get_mode": _handle_get_mode,
     "request_handoff": _handle_request_handoff,
+    # 标题生成
+    "generate_title": _handle_generate_title,
 }
 
 

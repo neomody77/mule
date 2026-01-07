@@ -426,6 +426,18 @@ class ConnectionPool {
     });
   }
 
+  /// 发送生成标题请求
+  void sendGenerateTitle(String sessionId) {
+    final sub = _findSubscription(sessionId);
+    if (sub == null) return;
+
+    _sendToServer(sub.serverId, {
+      'type': 'generate_title',
+      'workspace_id': sub.workspaceId,
+      'session_id': sub.sessionId,
+    });
+  }
+
   /// 发送 ping (通过 serverId)
   void sendPing(String serverId) {
     _sendToServer(serverId, {'type': 'ping'});

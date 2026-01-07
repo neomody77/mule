@@ -513,6 +513,11 @@ class SessionNotifier extends StateNotifier<SessionState> {
     _connectionPool.sendCompact(sessionId);
   }
 
+  /// AI 生成标题
+  void generateTitle(String sessionId) {
+    _connectionPool.sendGenerateTitle(sessionId);
+  }
+
   /// 发送 ping
   void pingSession(String sessionId) {
     _connectionPool.sendPingForSession(sessionId);
