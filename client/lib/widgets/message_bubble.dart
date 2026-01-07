@@ -282,8 +282,11 @@ class _MessageBubbleState extends State<MessageBubble> {
     final resultContent = toolCall.result?['content'] as String?;
     final hasContent = resultContent != null && resultContent.isNotEmpty;
 
+    // 命令文本较长时也可以展开查看完整内容
+    final canExpand = hasContent || displayText.length > 60;
+
     return GestureDetector(
-      onTap: hasContent
+      onTap: canExpand
           ? () {
               setState(() {
                 if (isExpanded) {
@@ -311,11 +314,15 @@ class _MessageBubbleState extends State<MessageBubble> {
           children: [
             // 工具调用头部
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  _getToolIcon(toolCall.name),
-                  size: 14,
-                  color: Theme.of(context).colorScheme.primary,
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    _getToolIcon(toolCall.name),
+                    size: 14,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
                 const SizedBox(width: 6),
                 Expanded(
@@ -326,32 +333,41 @@ class _MessageBubbleState extends State<MessageBubble> {
                       color: Theme.of(context).colorScheme.onSurface,
                       fontFamily: toolCall.name == 'Bash' ? 'monospace' : null,
                     ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
+                    overflow: isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                    maxLines: isExpanded ? null : 2,
                   ),
                 ),
                 const SizedBox(width: 6),
                 if (isExecuting)
-                  const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                   )
                 else if (hasResult) ...[
-                  Icon(
-                    isError ? Icons.error_outline : Icons.check_circle_outline,
-                    size: 14,
-                    color: isError
-                        ? Theme.of(context).colorScheme.error
-                        : Colors.green,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Icon(
+                      isError ? Icons.error_outline : Icons.check_circle_outline,
+                      size: 14,
+                      color: isError
+                          ? Theme.of(context).colorScheme.error
+                          : Colors.green,
+                    ),
                   ),
                   // 展开/收起指示器
-                  if (hasContent) ...[
+                  if (canExpand) ...[
                     const SizedBox(width: 4),
-                    Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      size: 16,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Icon(
+                        isExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ],

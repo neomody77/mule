@@ -836,6 +836,14 @@ class SessionNotifier extends StateNotifier<SessionState> {
     } else if (statusType == 'cancelled') {
       // 先停止最后一条消息的 streaming 状态
       _updateLastMessage(sessionId, (m) => m.copyWith(isStreaming: false));
+
+      // 从服务端返回的 cleared_prompts 恢复内容到 draft
+      final clearedPrompts = (data['cleared_prompts'] as List<dynamic>?)?.cast<String>() ?? [];
+      String? restoredDraft;
+      if (clearedPrompts.isNotEmpty) {
+        restoredDraft = clearedPrompts.join('\n');
+      }
+
       // 添加取消状态消息
       _addMessage(
         sessionId,
@@ -844,7 +852,11 @@ class SessionNotifier extends StateNotifier<SessionState> {
           content: message ?? 'Task cancelled',
         ),
       );
-      _updateSession(sessionId, (s) => s.copyWith(isProcessing: false));
+      _updateSession(sessionId, (s) => s.copyWith(
+        isProcessing: false,
+        pendingPrompts: [],  // 清空 pending prompts
+        draft: restoredDraft ?? s.draft,  // 恢复到 draft
+      ));
     }
   }
 
