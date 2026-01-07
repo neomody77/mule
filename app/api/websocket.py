@@ -1,7 +1,10 @@
 """WebSocket 实时通信模块 - 支持服务器级共享连接 + CLI 中继"""
 import asyncio
+import base64
 import json
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Optional, Set, Callable, Dict, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
@@ -427,9 +430,58 @@ async def _handle_unsubscribe(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+def _save_image_to_workspace(workspace_id: str, image_data: dict) -> Optional[str]:
+    """保存图片到工作区，返回相对路径"""
+    try:
+        data = image_data.get("data", "")
+        media_type = image_data.get("media_type", "image/jpeg")
+
+        if not data:
+            return None
+
+        # 确定文件扩展名
+        ext_map = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/gif": "gif",
+            "image/webp": "webp",
+        }
+        ext = ext_map.get(media_type, "jpg")
+
+        # 生成文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"image_{timestamp}.{ext}"
+
+        # 保存到 .uploads 目录
+        workspace_path = settings.get_workspace_path(workspace_id)
+        uploads_dir = workspace_path / ".uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = uploads_dir / filename
+        image_bytes = base64.b64decode(data)
+        file_path.write_bytes(image_bytes)
+
+        logger.info(f"Image saved to {file_path}")
+        return f".uploads/{filename}"
+    except Exception as e:
+        logger.error(f"Failed to save image: {e}")
+        return None
+
+
 async def _handle_prompt(ctx: MessageHandlerContext) -> bool:
     """处理 prompt 消息"""
     content = ctx.data.get("content", "")
+    image = ctx.data.get("image")  # 可选的图片数据
+
+    # 如果有图片，保存并修改 prompt
+    if image:
+        image_path = _save_image_to_workspace(ctx.workspace_id, image)
+        if image_path:
+            # 将图片路径加入 prompt
+            image_prompt = f"\n\n[User attached an image: {image_path}]\nPlease read and analyze the image using the Read tool."
+            content = content + image_prompt if content else f"Please analyze this image: {image_path}"
+            logger.info(f"Image attached to prompt: {image_path}")
+
     if not content:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "error",

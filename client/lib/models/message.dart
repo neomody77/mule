@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:uuid/uuid.dart';
 
 /// 消息类型
@@ -57,6 +59,7 @@ class ChatMessage {
   final List<ToolCall> toolCalls;
   final bool isStreaming;
   final bool isPending; // 已发送但尚未被处理
+  final Uint8List? imageData; // 图片数据（用于本地显示）
 
   ChatMessage({
     String? id,
@@ -66,8 +69,12 @@ class ChatMessage {
     this.toolCalls = const [],
     this.isStreaming = false,
     this.isPending = false,
+    this.imageData,
   })  : id = id ?? const Uuid().v4(),
         timestamp = timestamp ?? DateTime.now();
+
+  /// 是否包含图片
+  bool get hasImage => imageData != null && imageData!.isNotEmpty;
 
   ChatMessage copyWith({
     String? id,
@@ -77,6 +84,7 @@ class ChatMessage {
     List<ToolCall>? toolCalls,
     bool? isStreaming,
     bool? isPending,
+    Uint8List? imageData,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -86,6 +94,7 @@ class ChatMessage {
       toolCalls: toolCalls ?? this.toolCalls,
       isStreaming: isStreaming ?? this.isStreaming,
       isPending: isPending ?? this.isPending,
+      imageData: imageData ?? this.imageData,
     );
   }
 

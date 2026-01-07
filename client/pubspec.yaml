@@ -51,6 +51,9 @@ dependencies:
   # 文件选择器
   file_picker: ^8.0.0
 
+  # 图片选择器（相机/相册）
+  image_picker: ^1.0.7
+
   # 文件下载/分享
   path_provider: ^2.1.2
   share_plus: ^10.0.0
