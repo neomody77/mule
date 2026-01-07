@@ -1,12 +1,12 @@
 """
-ACP Sandbox Agent - ACP 协议 + Docker 沙箱隔离
+Claude Sandbox Agent - Claude Code SDK 协议 + Docker 沙箱隔离
 
-结合 ACP 协议的细粒度控制能力和 Docker 沙箱的安全隔离，
-实现最完整的远程编程助手方案：
-- 远程权限审批
-- 本地/远程模式切换
+结合 Claude Code SDK 的流式协议和 Docker 沙箱的安全隔离：
+- 远程权限审批 (--permission-prompt-tool stdio)
 - Docker 容器隔离
 - OAuth Token 自动刷新
+
+参考 HAPI 项目的实现: https://github.com/tiann/hapi
 """
 import asyncio
 import json
@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Optional
 
-from app.services.acp_transport import AcpTransport, AcpTransportError
+from app.services.acp_transport import ClaudeTransport, ClaudeTransportError
 from app.services.permission_adapter import PermissionAdapter, PermissionDecision
 from app.services.agent_logger import AgentLogger, agent_logger_manager
 from app.services.workspace_manager import workspace_manager
@@ -36,12 +36,12 @@ CLAUDE_CREDENTIALS_FILE = CLAUDE_CONFIG_DIR / ".credentials.json"
 CONTAINER_DATA_DIR = settings.data_dir / "containers"
 
 
-class AcpSandboxAgent:
+class ClaudeSandboxAgent:
     """
-    ACP + Docker 沙箱 Agent
+    Claude Code SDK + Docker 沙箱 Agent
 
     融合两种方案的优势：
-    - ACP 协议：细粒度权限控制、本地/远程模式切换
+    - Claude Code SDK：官方流式协议、远程权限审批
     - Docker 沙箱：安全隔离、凭据管理、环境一致性
     """
 
@@ -82,22 +82,25 @@ class AcpSandboxAgent:
         if workspace_id and agent_session_id:
             self.activity_logger = agent_logger_manager.get_logger(workspace_id, agent_session_id)
 
-        # ACP 传输层（在容器内运行）
-        self._transport: Optional[AcpTransport] = None
+        # 传输层
+        self._transport: Optional[ClaudeTransport] = None
 
         # 权限适配器
         self._permission_adapter: Optional[PermissionAdapter] = None
 
+        # 待处理的权限请求
+        self._pending_permissions: dict[str, asyncio.Future] = {}
+
         # 状态
-        self._is_connected = False
         self._is_processing = False
+        self._current_tool_calls: dict[str, dict] = {}
 
     def _get_container_name(self) -> str:
         """生成容器名称"""
         import hashlib
         hash_input = f"{self.workspace_id}:{self.agent_session_id}"
         hash_value = hashlib.md5(hash_input.encode()).hexdigest()[:8]
-        return f"mule-acp-{hash_value}"
+        return f"mule-sandbox-{hash_value}"
 
     def _setup_container_dirs(self):
         """准备容器目录"""
@@ -159,6 +162,8 @@ class AcpSandboxAgent:
             "-v", f"{self.container_claude_dir}:{container_home}/.claude",
             "-v", f"{self.container_claude_dir / '.claude.json'}:{container_home}/.claude.json",
             "-e", "DISABLE_TELEMETRY=1",
+            "-e", "DISABLE_AUTOUPDATER=1",
+            "-e", "CLAUDE_CODE_ENTRYPOINT=sdk-python",
         ]
 
         # 传递环境变量
@@ -174,158 +179,222 @@ class AcpSandboxAgent:
         subprocess.run(docker_args, check=True)
         logger.info(f"Container {self.container_name} created")
 
-    async def _ensure_connected(self):
-        """确保已连接"""
-        if self._is_connected and self._transport and self._transport.is_connected:
-            return
-
-        # 确保容器运行
-        self._ensure_container()
-
-        # 创建传输层
-        self._transport = AcpTransport()
-
-        # 创建权限适配器
-        if self.permission_mode == "remote" and self._on_permission_request:
-            self._permission_adapter = PermissionAdapter(
-                on_permission_request=self._on_permission_request,
-            )
-
-        # 在容器内启动 Claude Code
+    def _build_docker_command(self) -> list[str]:
+        """构建 Docker exec 命令"""
         command = [
             "docker", "exec", "-i",
             "-w", "/workspace",
             self.container_name,
-            "claude",  # 假设容器内已安装 claude
+            "claude",
+            "--output-format", "stream-json",
+            "--input-format", "stream-json",
+            "--verbose",
         ]
 
+        # 权限模式
         if self.permission_mode == "bypass":
             command.append("--dangerously-skip-permissions")
+        else:
+            command.extend(["--permission-prompt-tool", "stdio"])
 
-        await self._transport.connect(command=command)
+        # 恢复会话
+        if self.session_id:
+            command.extend(["--resume", self.session_id])
 
-        # 注册处理器
-        self._transport.on_notification("sessionUpdate", self._handle_session_update)
-        self._transport.on_notification("toolCall", self._handle_tool_call)
-        self._transport.on_notification("toolCallUpdate", self._handle_tool_call_update)
-
-        if self._permission_adapter:
-            self._transport.on_request(
-                "permissionRequest",
-                self._permission_adapter.handle_permission_request
-            )
-
-        # 初始化
-        try:
-            await self._transport.send_request("initialize", {
-                "protocolVersion": "1.0",
-                "capabilities": {"permissions": self.permission_mode == "remote"},
-            })
-        except Exception as e:
-            logger.warning(f"Initialize failed: {e}")
-
-        self._is_connected = True
-        logger.info(f"ACP Sandbox Agent connected: {self.container_name}")
+        return command
 
     async def execute(self, prompt: str) -> AsyncGenerator[dict, None]:
         """执行 prompt"""
         self._is_processing = True
+        self._current_tool_calls.clear()
 
         try:
-            await self._ensure_connected()
+            # 确保容器运行
+            self._ensure_container()
+
+            # 创建传输层
+            self._transport = ClaudeTransport()
+
+            # 设置权限处理器
+            if self.permission_mode == "remote" and self._on_permission_request:
+                self._permission_adapter = PermissionAdapter(
+                    on_permission_request=self._on_permission_request,
+                )
+                self._transport.on_control_request(self._handle_permission_request)
+
+            # 连接 (使用 Docker exec)
+            docker_command = self._build_docker_command()
+            await self._transport.connect(
+                cwd=str(self.workspace_path),
+                custom_command=docker_command,
+            )
+
+            logger.info(f"Executing in sandbox: {prompt[:100]}...")
 
             if self.activity_logger:
                 self.activity_logger.log_task_start(prompt)
 
             yield {"event": "status", "data": {"type": "task_start", "message": "Starting..."}}
 
-            prompt_params = {"text": prompt}
-            if self.session_id:
-                prompt_params["sessionId"] = self.session_id
-
-            prompt_future = asyncio.create_task(
-                self._transport.send_request("prompt", prompt_params)
-            )
+            # 发送用户消息
+            await self._transport.send_user_message(prompt)
 
             yield {"event": "status", "data": {"type": "thinking", "message": "Thinking..."}}
 
-            try:
-                result = await prompt_future
+            # 处理流式响应
+            while True:
+                message = await self._transport.get_next_message(timeout=300)
 
-                if result and isinstance(result, dict):
-                    if "sessionId" in result:
-                        self.session_id = result["sessionId"]
-                        if self.workspace_id and self.agent_session_id:
-                            workspace_manager.set_session_id(
-                                self.workspace_id,
-                                self.agent_session_id,
-                                self.session_id
-                            )
+                if message is None:
+                    logger.warning("Message timeout or connection closed")
+                    break
+
+                msg_type = message.get("type", "")
+
+                # 处理系统消息
+                if msg_type == "system":
+                    subtype = message.get("subtype", "")
+                    if subtype == "init":
+                        new_session_id = message.get("session_id")
+                        if new_session_id:
+                            self.session_id = new_session_id
+                            logger.info(f"Session started: {self.session_id}")
+                            if self.workspace_id and self.agent_session_id:
+                                workspace_manager.set_session_id(
+                                    self.workspace_id,
+                                    self.agent_session_id,
+                                    self.session_id
+                                )
+                    continue
+
+                # 处理 assistant 消息
+                if msg_type == "assistant":
+                    content = message.get("message", {}).get("content", [])
+                    for block in content:
+                        if block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text:
+                                yield {
+                                    "event": "text_delta",
+                                    "data": {"text": text}
+                                }
+                        elif block.get("type") == "tool_use":
+                            tool_id = block.get("id", "")
+                            tool_name = block.get("name", "")
+                            tool_input = block.get("input", {})
+                            self._current_tool_calls[tool_id] = {
+                                "name": tool_name,
+                                "input": tool_input,
+                            }
+                            self._log_tool_use(tool_name, tool_input)
+                            yield {
+                                "event": "tool_use_start",
+                                "data": {
+                                    "id": tool_id,
+                                    "name": tool_name,
+                                    "input": tool_input,
+                                    "description": self._get_tool_description(tool_name, tool_input),
+                                }
+                            }
+                    continue
+
+                # 处理 user 消息 (工具结果)
+                if msg_type == "user":
+                    content = message.get("message", {}).get("content", [])
+                    for block in content:
+                        if block.get("type") == "tool_result":
+                            tool_id = block.get("tool_use_id", "")
+                            result = block.get("content", "")
+                            is_error = block.get("is_error", False)
+                            display_result = result
+                            if isinstance(result, str) and len(result) > 300:
+                                display_result = result[:300] + "..."
+                            yield {
+                                "event": "tool_result",
+                                "data": {
+                                    "id": tool_id,
+                                    "content": display_result,
+                                    "is_error": is_error,
+                                }
+                            }
+                            self._current_tool_calls.pop(tool_id, None)
+                    continue
+
+                # 处理结果消息
+                if msg_type == "result":
+                    is_error = message.get("is_error", False)
+                    result_text = message.get("result", "")
 
                     if self.activity_logger:
                         self.activity_logger.log_task_end(
-                            success=not result.get("isError", False),
-                            error=result.get("error") if result.get("isError") else None
+                            success=not is_error,
+                            error=result_text if is_error else None
                         )
 
                     yield {
                         "event": "message_end",
                         "data": {
                             "session_id": self.session_id,
-                            "is_error": result.get("isError", False),
-                            "result": result.get("result", ""),
+                            "is_error": is_error,
+                            "result": result_text,
+                            "duration_ms": message.get("duration_ms", 0),
+                            "num_turns": message.get("num_turns", 0),
                         }
                     }
+                    break
 
-            except AcpTransportError as e:
-                logger.error(f"Prompt failed: {e}")
-                yield {"event": "error", "data": {"message": str(e)}}
+        except ClaudeTransportError as e:
+            logger.error(f"Transport error: {e}")
+            if self.activity_logger:
+                self.activity_logger.log_task_end(success=False, error=str(e))
+            yield {"event": "error", "data": {"message": str(e)}}
 
         except Exception as e:
             logger.error(f"Execution error: {e}", exc_info=True)
+            if self.activity_logger:
+                self.activity_logger.log_task_end(success=False, error=str(e))
             yield {"event": "error", "data": {"message": str(e)}}
 
         finally:
             self._is_processing = False
+            if self._transport:
+                await self._transport.disconnect()
+                self._transport = None
 
-    async def _handle_session_update(self, params: dict):
-        """处理会话更新"""
-        update_type = params.get("type", "")
+    async def _handle_permission_request(self, request: dict) -> dict:
+        """处理权限请求"""
+        request_id = request.get("request_id", "")
+        tool_name = request.get("tool_name", "")
+        tool_input = request.get("tool_input", {})
 
-        if update_type == "text" and self._on_event:
-            await self._on_event({
-                "event": "text_delta",
-                "data": {"text": params.get("content", "")}
-            })
+        logger.info(f"Permission request: {tool_name} (id={request_id})")
 
-    async def _handle_tool_call(self, params: dict):
-        """处理工具调用"""
-        if self.activity_logger:
-            tool_name = params.get("name", "")
-            tool_input = params.get("input", {})
-            self._log_tool_use(tool_name, tool_input)
+        if self._permission_adapter:
+            try:
+                decision = await self._permission_adapter.handle_permission_request({
+                    "tool_use_id": request_id,
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "description": self._get_tool_description(tool_name, tool_input),
+                })
 
-        if self._on_event:
-            await self._on_event({
-                "event": "tool_use_start",
-                "data": {
-                    "id": params.get("id"),
-                    "name": params.get("name"),
-                    "input": params.get("input"),
-                }
-            })
+                if decision.get("approved"):
+                    return {
+                        "behavior": "allow",
+                        "updatedInput": decision.get("updated_input"),
+                    }
+                else:
+                    return {"behavior": "deny"}
 
-    async def _handle_tool_call_update(self, params: dict):
-        """处理工具调用更新"""
-        if params.get("status") == "completed" and self._on_event:
-            await self._on_event({
-                "event": "tool_result",
-                "data": {
-                    "id": params.get("id"),
-                    "content": str(params.get("result", ""))[:300],
-                    "is_error": params.get("isError", False),
-                }
-            })
+            except asyncio.TimeoutError:
+                logger.warning(f"Permission request timeout: {request_id}")
+                return {"behavior": "deny"}
+
+            except Exception as e:
+                logger.error(f"Permission request error: {e}")
+                return {"behavior": "deny"}
+        else:
+            return {"behavior": "allow"}
 
     def _log_tool_use(self, tool_name: str, tool_input: dict):
         """记录工具使用"""
@@ -334,14 +403,49 @@ class AcpSandboxAgent:
 
         handlers = {
             "Read": lambda: self.activity_logger.log_file_read(tool_input.get("file_path", "")),
-            "Write": lambda: self.activity_logger.log_file_write(tool_input.get("file_path", "")),
-            "Edit": lambda: self.activity_logger.log_file_edit(tool_input.get("file_path", "")),
+            "Write": lambda: self.activity_logger.log_file_write(
+                tool_input.get("file_path", ""),
+                size=len(tool_input.get("content", "")),
+                is_new=True
+            ),
+            "Edit": lambda: self.activity_logger.log_file_edit(
+                tool_input.get("file_path", ""),
+                changes={}
+            ),
             "Bash": lambda: self.activity_logger.log_bash_exec(tool_input.get("command", "")),
+            "Glob": lambda: self.activity_logger.log_glob(tool_input.get("pattern", "")),
+            "Grep": lambda: self.activity_logger.log_grep(
+                tool_input.get("pattern", ""),
+                tool_input.get("path", "")
+            ),
         }
 
         handler = handlers.get(tool_name)
         if handler:
             handler()
+
+    def _get_tool_description(self, tool_name: str, tool_input: dict) -> str:
+        """生成用户友好的工具描述"""
+        def _truncate(s: str, max_len: int = 50) -> str:
+            return s[:max_len - 3] + "..." if len(s) > max_len else s
+
+        def _get_filename(path: str) -> str:
+            return path.split("/")[-1] if path else "file"
+
+        generators = {
+            "Read": lambda: f"Reading {_get_filename(tool_input.get('file_path', ''))}...",
+            "Write": lambda: f"Writing {_get_filename(tool_input.get('file_path', ''))}...",
+            "Edit": lambda: f"Editing {_get_filename(tool_input.get('file_path', ''))}...",
+            "Bash": lambda: f"Running: {_truncate(tool_input.get('command', ''))}",
+            "Glob": lambda: f"Searching: {tool_input.get('pattern', '')}",
+            "Grep": lambda: f"Grep: {tool_input.get('pattern', '')}",
+            "WebSearch": lambda: f"Searching: {tool_input.get('query', '')}",
+            "WebFetch": lambda: f"Fetching: {_truncate(tool_input.get('url', ''))}",
+            "Task": lambda: f"Task: {tool_input.get('description', '')}",
+        }
+
+        generator = generators.get(tool_name)
+        return generator() if generator else f"Using {tool_name}..."
 
     async def respond_permission(self, tool_use_id: str, decision: str, updated_input: dict = None):
         """响应权限请求"""
@@ -356,27 +460,54 @@ class AcpSandboxAgent:
         """取消执行"""
         if self._transport and self._is_processing:
             try:
-                await self._transport.send_request("cancel", {})
+                await self._transport.send_interrupt()
             except Exception as e:
                 logger.error(f"Cancel failed: {e}")
 
             if self._permission_adapter:
-                self._permission_adapter.cancel_all()
+                self._permission_adapter.cancel_all("task cancelled")
 
     async def compact(self) -> dict:
         """压缩上下文"""
         if not self.session_id:
             raise ValueError("No active session")
 
-        await self._ensure_connected()
-        result = await self._transport.send_request("compact", {"sessionId": self.session_id})
-        return {"success": True, "result": result}
+        # 确保容器运行
+        self._ensure_container()
 
-    async def disconnect(self):
-        """断开连接"""
-        if self._transport:
-            await self._transport.disconnect()
-            self._is_connected = False
+        transport = ClaudeTransport()
+        try:
+            docker_command = [
+                "docker", "exec", "-i",
+                "-w", "/workspace",
+                self.container_name,
+                "claude",
+                "--output-format", "stream-json",
+                "--input-format", "stream-json",
+                "--dangerously-skip-permissions",
+                "--resume", self.session_id,
+            ]
+
+            await transport.connect(
+                cwd=str(self.workspace_path),
+                custom_command=docker_command,
+            )
+
+            await transport.send_user_message("/compact")
+
+            result_text = ""
+            while True:
+                message = await transport.get_next_message(timeout=60)
+                if message is None:
+                    break
+                if message.get("type") == "result":
+                    result_text = message.get("result", "Context compacted")
+                    break
+
+            return {"success": True, "session_id": self.session_id, "result": result_text}
+
+        finally:
+            await transport.disconnect()
 
     def stop_container(self):
         """停止容器"""
@@ -400,9 +531,9 @@ class AcpSandboxAgent:
         return []
 
     @property
-    def is_connected(self) -> bool:
-        return self._is_connected
-
-    @property
     def is_processing(self) -> bool:
         return self._is_processing
+
+
+# 别名，保持兼容
+AcpSandboxAgent = ClaudeSandboxAgent

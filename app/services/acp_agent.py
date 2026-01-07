@@ -1,20 +1,20 @@
 """
-ACP Agent - 基于 ACP 协议的 Claude Code Agent
+Claude Code Agent - 基于官方 SDK stream-json 协议的 Agent
 
-通过 ACP (Agent Client Protocol) 直接与 Claude Code 进程通信，
-提供协议级别的控制能力，包括：
-- 细粒度权限控制
-- 完整的消息流处理
-- 本地/远程模式切换支持
+通过 Claude Code 官方 SDK 协议与 Claude Code 进程通信，支持：
+- 流式消息输出
+- 远程权限审批 (--permission-prompt-tool stdio)
+- 会话恢复 (--resume)
+
+参考 HAPI 项目的实现: https://github.com/tiann/hapi
 """
 import asyncio
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Optional
 
-from app.services.acp_transport import AcpTransport, AcpTransportError
+from app.services.acp_transport import ClaudeTransport, ClaudeTransportError
 from app.services.permission_adapter import PermissionAdapter, PermissionDecision
 from app.services.agent_logger import AgentLogger, agent_logger_manager
 from app.services.workspace_manager import workspace_manager
@@ -22,15 +22,15 @@ from app.services.workspace_manager import workspace_manager
 logger = logging.getLogger(__name__)
 
 
-class AcpAgent:
+class ClaudeAgent:
     """
-    基于 ACP 协议的 Claude Code Agent
+    基于 Claude Code SDK 协议的 Agent
 
     特性：
-    - 直接使用 JSON-RPC 协议与 Claude Code 通信
+    - 使用官方 stream-json 协议
     - 支持远程权限审批
-    - 支持本地/远程模式切换
     - 流式响应处理
+    - 会话恢复
     """
 
     def __init__(
@@ -77,85 +77,18 @@ class AcpAgent:
         if workspace_id and agent_session_id:
             self.activity_logger = agent_logger_manager.get_logger(workspace_id, agent_session_id)
 
-        # ACP 传输层
-        self._transport: Optional[AcpTransport] = None
+        # 传输层
+        self._transport: Optional[ClaudeTransport] = None
 
         # 权限适配器
         self._permission_adapter: Optional[PermissionAdapter] = None
 
+        # 待处理的权限请求
+        self._pending_permissions: dict[str, asyncio.Future] = {}
+
         # 状态
-        self._is_connected = False
         self._is_processing = False
         self._current_tool_calls: dict[str, dict] = {}  # tool_use_id -> tool info
-
-    async def _ensure_connected(self):
-        """确保已连接到 Claude Code"""
-        if self._is_connected and self._transport and self._transport.is_connected:
-            return
-
-        # 创建传输层
-        self._transport = AcpTransport()
-
-        # 创建权限适配器
-        if self.permission_mode == "remote" and self._on_permission_request:
-            self._permission_adapter = PermissionAdapter(
-                on_permission_request=self._on_permission_request,
-            )
-
-        # 构建启动命令
-        cli_path = AcpTransport.find_claude_cli()
-        if not cli_path:
-            raise AcpTransportError("Claude CLI not found")
-
-        command = [cli_path]
-
-        # 根据权限模式添加参数
-        if self.permission_mode == "bypass":
-            command.append("--dangerously-skip-permissions")
-
-        # 环境变量
-        env = {
-            "CLAUDE_CODE_ENTRYPOINT": "acp",  # 使用 ACP 模式
-        }
-
-        # 连接
-        await self._transport.connect(
-            command=command,
-            env=env,
-            cwd=str(self.workspace_path),
-        )
-
-        # 注册消息处理器
-        self._transport.on_notification("sessionUpdate", self._handle_session_update)
-        self._transport.on_notification("toolCall", self._handle_tool_call)
-        self._transport.on_notification("toolCallUpdate", self._handle_tool_call_update)
-
-        # 注册权限请求处理器（如果启用远程审批）
-        if self._permission_adapter:
-            self._transport.on_request(
-                "permissionRequest",
-                self._permission_adapter.handle_permission_request
-            )
-
-        # 发送初始化请求
-        try:
-            init_result = await self._transport.send_request("initialize", {
-                "protocolVersion": "1.0",
-                "clientInfo": {
-                    "name": "mule",
-                    "version": "1.0.0",
-                },
-                "capabilities": {
-                    "permissions": self.permission_mode == "remote",
-                    "streaming": True,
-                },
-            })
-            logger.info(f"ACP initialized: {init_result}")
-        except Exception as e:
-            logger.warning(f"Initialize request failed (may not be supported): {e}")
-
-        self._is_connected = True
-        logger.info(f"ACP Agent connected for {self.workspace_id}:{self.agent_session_id}")
 
     async def execute(self, prompt: str) -> AsyncGenerator[dict, None]:
         """
@@ -168,7 +101,22 @@ class AcpAgent:
         self._current_tool_calls.clear()
 
         try:
-            await self._ensure_connected()
+            # 创建传输层
+            self._transport = ClaudeTransport()
+
+            # 设置权限处理器
+            if self.permission_mode == "remote" and self._on_permission_request:
+                self._permission_adapter = PermissionAdapter(
+                    on_permission_request=self._on_permission_request,
+                )
+                self._transport.on_control_request(self._handle_permission_request)
+
+            # 连接
+            await self._transport.connect(
+                cwd=str(self.workspace_path),
+                session_id=self.session_id,
+                permission_mode="bypass" if self.permission_mode == "bypass" else "default",
+            )
 
             logger.info(f"Executing prompt: {prompt[:100]}...")
 
@@ -182,20 +130,8 @@ class AcpAgent:
                 "data": {"type": "task_start", "message": "Starting task..."}
             }
 
-            # 构建 prompt 请求参数
-            prompt_params = {
-                "text": prompt,
-            }
-
-            # 如果有会话 ID，添加 resume
-            if self.session_id:
-                prompt_params["sessionId"] = self.session_id
-
-            # 发送 prompt
-            # 注意：这里我们不等待响应，而是通过通知接收流式输出
-            prompt_future = asyncio.create_task(
-                self._transport.send_request("prompt", prompt_params)
-            )
+            # 发送用户消息
+            await self._transport.send_user_message(prompt)
 
             # 发送 thinking 状态
             yield {
@@ -203,28 +139,106 @@ class AcpAgent:
                 "data": {"type": "thinking", "message": "Thinking..."}
             }
 
-            # 等待 prompt 完成
-            try:
-                result = await prompt_future
+            # 处理流式响应
+            while True:
+                message = await self._transport.get_next_message(timeout=300)  # 5 分钟超时
 
-                # 更新 session_id
-                if result and isinstance(result, dict):
-                    if "sessionId" in result:
-                        self.session_id = result["sessionId"]
-                        # 持久化 session_id
-                        if self.workspace_id and self.agent_session_id:
-                            workspace_manager.set_session_id(
-                                self.workspace_id,
-                                self.agent_session_id,
-                                self.session_id
-                            )
+                if message is None:
+                    # 超时或连接关闭
+                    logger.warning("Message timeout or connection closed")
+                    break
+
+                msg_type = message.get("type", "")
+
+                # 处理系统消息
+                if msg_type == "system":
+                    subtype = message.get("subtype", "")
+                    if subtype == "init":
+                        # 会话初始化，获取 session_id
+                        new_session_id = message.get("session_id")
+                        if new_session_id:
+                            self.session_id = new_session_id
+                            logger.info(f"Session started: {self.session_id}")
+                            # 持久化 session_id
+                            if self.workspace_id and self.agent_session_id:
+                                workspace_manager.set_session_id(
+                                    self.workspace_id,
+                                    self.agent_session_id,
+                                    self.session_id
+                                )
+                    continue
+
+                # 处理 assistant 消息
+                if msg_type == "assistant":
+                    await self._handle_assistant_message(message)
+                    # 提取文本内容
+                    content = message.get("message", {}).get("content", [])
+                    for block in content:
+                        if block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text:
+                                yield {
+                                    "event": "text_delta",
+                                    "data": {"text": text}
+                                }
+                        elif block.get("type") == "tool_use":
+                            # 工具调用开始
+                            tool_id = block.get("id", "")
+                            tool_name = block.get("name", "")
+                            tool_input = block.get("input", {})
+                            self._current_tool_calls[tool_id] = {
+                                "name": tool_name,
+                                "input": tool_input,
+                            }
+                            # 记录工具使用
+                            self._log_tool_use(tool_name, tool_input)
+                            yield {
+                                "event": "tool_use_start",
+                                "data": {
+                                    "id": tool_id,
+                                    "name": tool_name,
+                                    "input": tool_input,
+                                    "description": self._get_tool_description(tool_name, tool_input),
+                                }
+                            }
+                    continue
+
+                # 处理 user 消息 (工具结果)
+                if msg_type == "user":
+                    content = message.get("message", {}).get("content", [])
+                    for block in content:
+                        if block.get("type") == "tool_result":
+                            tool_id = block.get("tool_use_id", "")
+                            result = block.get("content", "")
+                            is_error = block.get("is_error", False)
+                            # 截断过长的结果
+                            display_result = result
+                            if isinstance(result, str) and len(result) > 300:
+                                display_result = result[:300] + "..."
+                            yield {
+                                "event": "tool_result",
+                                "data": {
+                                    "id": tool_id,
+                                    "content": display_result,
+                                    "is_error": is_error,
+                                }
+                            }
+                            # 清理
+                            self._current_tool_calls.pop(tool_id, None)
+                    continue
+
+                # 处理结果消息
+                if msg_type == "result":
+                    is_error = message.get("is_error", False)
+                    result_text = message.get("result", "")
+                    duration_ms = message.get("duration_ms", 0)
+                    num_turns = message.get("num_turns", 0)
 
                     # 记录任务结束
-                    is_error = result.get("isError", False)
                     if self.activity_logger:
                         self.activity_logger.log_task_end(
                             success=not is_error,
-                            error=result.get("error") if is_error else None
+                            error=result_text if is_error else None
                         )
 
                     yield {
@@ -232,21 +246,21 @@ class AcpAgent:
                         "data": {
                             "session_id": self.session_id,
                             "is_error": is_error,
-                            "result": result.get("result", ""),
-                            "duration_ms": result.get("durationMs", 0),
-                            "num_turns": result.get("numTurns", 0),
-                            "total_cost_usd": result.get("totalCostUsd", 0),
+                            "result": result_text,
+                            "duration_ms": duration_ms,
+                            "num_turns": num_turns,
                         }
                     }
+                    break  # 任务完成
 
-            except AcpTransportError as e:
-                logger.error(f"Prompt failed: {e}")
-                if self.activity_logger:
-                    self.activity_logger.log_task_end(success=False, error=str(e))
-                yield {
-                    "event": "error",
-                    "data": {"message": str(e)}
-                }
+        except ClaudeTransportError as e:
+            logger.error(f"Transport error: {e}")
+            if self.activity_logger:
+                self.activity_logger.log_task_end(success=False, error=str(e))
+            yield {
+                "event": "error",
+                "data": {"message": str(e)}
+            }
 
         except Exception as e:
             logger.error(f"Agent execution error: {e}", exc_info=True)
@@ -259,101 +273,90 @@ class AcpAgent:
 
         finally:
             self._is_processing = False
+            # 断开连接
+            if self._transport:
+                await self._transport.disconnect()
+                self._transport = None
 
-    async def _handle_session_update(self, params: dict):
-        """处理会话更新通知"""
-        update_type = params.get("type", "")
+    async def _handle_assistant_message(self, message: dict):
+        """处理 assistant 消息"""
+        # 可以在这里添加额外的处理逻辑
+        pass
 
-        if update_type == "text":
-            # 文本输出
-            text = params.get("content", "")
-            if text and self._on_event:
-                await self._on_event({
-                    "event": "text_delta",
-                    "data": {"text": text}
-                })
+    async def _handle_permission_request(self, request: dict) -> dict:
+        """
+        处理权限请求
 
-        elif update_type == "thinking":
-            # 思考过程（可选择是否显示）
-            if self._on_event:
-                await self._on_event({
-                    "event": "thinking",
-                    "data": {"content": params.get("content", "")}
-                })
+        Args:
+            request: {"request_id": str, "tool_name": str, "tool_input": dict}
 
-        elif update_type == "result":
-            # 结果
-            if self._on_event:
-                await self._on_event({
-                    "event": "result",
-                    "data": params
-                })
+        Returns:
+            {"behavior": "allow"/"deny", "updatedInput": dict (optional)}
+        """
+        request_id = request.get("request_id", "")
+        tool_name = request.get("tool_name", "")
+        tool_input = request.get("tool_input", {})
 
-    async def _handle_tool_call(self, params: dict):
-        """处理工具调用通知"""
-        tool_use_id = params.get("id", "")
-        tool_name = params.get("name", "")
-        tool_input = params.get("input", {})
+        logger.info(f"Permission request: {tool_name} (id={request_id})")
 
-        # 记录工具调用
-        self._current_tool_calls[tool_use_id] = {
-            "name": tool_name,
-            "input": tool_input,
-        }
+        if self._permission_adapter:
+            # 创建 Future 等待响应
+            future = asyncio.get_event_loop().create_future()
+            self._pending_permissions[request_id] = future
 
-        # 记录日志
-        if self.activity_logger:
-            self._log_tool_use(tool_name, tool_input)
-
-        # 发送事件
-        if self._on_event:
-            await self._on_event({
-                "event": "tool_use_start",
-                "data": {
-                    "id": tool_use_id,
-                    "name": tool_name,
-                    "input": tool_input,
+            # 发送权限请求到客户端
+            try:
+                decision = await self._permission_adapter.handle_permission_request({
+                    "tool_use_id": request_id,
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
                     "description": self._get_tool_description(tool_name, tool_input),
-                }
-            })
-
-    async def _handle_tool_call_update(self, params: dict):
-        """处理工具调用更新通知"""
-        tool_use_id = params.get("id", "")
-        status = params.get("status", "")
-
-        if status == "completed":
-            result = params.get("result", "")
-            is_error = params.get("isError", False)
-
-            # 截断过长的结果
-            display_result = result
-            if isinstance(result, str) and len(result) > 300:
-                display_result = result[:300] + "..."
-
-            if self._on_event:
-                await self._on_event({
-                    "event": "tool_result",
-                    "data": {
-                        "id": tool_use_id,
-                        "content": display_result,
-                        "is_error": is_error,
-                    }
                 })
 
-            # 清理
-            self._current_tool_calls.pop(tool_use_id, None)
-
-        elif status == "progress":
-            # 进度更新
-            if self._on_event:
-                await self._on_event({
-                    "event": "tool_progress",
-                    "data": {
-                        "id": tool_use_id,
-                        "progress": params.get("progress", {}),
+                # 转换为 SDK 格式
+                if decision.get("approved"):
+                    return {
+                        "behavior": "allow",
+                        "updatedInput": decision.get("updated_input"),
                     }
-                })
+                else:
+                    return {"behavior": "deny"}
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Permission request timeout: {request_id}")
+                return {"behavior": "deny"}
+
+            except Exception as e:
+                logger.error(f"Permission request error: {e}")
+                return {"behavior": "deny"}
+
+            finally:
+                self._pending_permissions.pop(request_id, None)
+        else:
+            # 没有权限适配器，默认允许
+            return {"behavior": "allow"}
+
+    async def respond_permission(
+        self,
+        tool_use_id: str,
+        decision: str,
+        updated_input: Optional[dict] = None,
+    ):
+        """
+        响应权限请求
+
+        Args:
+            tool_use_id: 工具调用 ID
+            decision: 决策 ("approved", "approved_for_session", "denied", "abort")
+            updated_input: 可选的修改后输入
+        """
+        if self._permission_adapter:
+            try:
+                decision_enum = PermissionDecision(decision)
+            except ValueError:
+                logger.error(f"Invalid decision: {decision}")
+                return
+            self._permission_adapter.respond(tool_use_id, decision_enum, updated_input)
 
     def _log_tool_use(self, tool_name: str, tool_input: dict):
         """记录工具使用到活动日志"""
@@ -409,38 +412,12 @@ class AcpAgent:
         generator = generators.get(tool_name)
         return generator() if generator else f"Using {tool_name}..."
 
-    async def respond_permission(
-        self,
-        tool_use_id: str,
-        decision: str,
-        updated_input: Optional[dict] = None,
-    ):
-        """
-        响应权限请求
-
-        Args:
-            tool_use_id: 工具调用 ID
-            decision: 决策 ("approved", "approved_for_session", "denied", "abort")
-            updated_input: 可选的修改后输入
-        """
-        if not self._permission_adapter:
-            logger.warning("Permission adapter not available")
-            return
-
-        try:
-            decision_enum = PermissionDecision(decision)
-        except ValueError:
-            logger.error(f"Invalid decision: {decision}")
-            return
-
-        self._permission_adapter.respond(tool_use_id, decision_enum, updated_input)
-
     async def cancel(self):
         """取消当前执行"""
         if self._transport and self._is_processing:
             logger.info("Cancelling current task...")
             try:
-                await self._transport.send_request("cancel", {})
+                await self._transport.send_interrupt()
             except Exception as e:
                 logger.error(f"Cancel failed: {e}")
 
@@ -449,42 +426,47 @@ class AcpAgent:
                 self._permission_adapter.cancel_all("task cancelled")
 
     async def compact(self) -> dict:
-        """压缩上下文"""
+        """压缩上下文 (通过发送 /compact 命令)"""
         if not self.session_id:
             raise ValueError("No active session to compact")
 
         logger.info(f"Compacting context for session {self.session_id}")
 
+        # 创建新的传输层发送 /compact
+        transport = ClaudeTransport()
         try:
-            await self._ensure_connected()
+            await transport.connect(
+                cwd=str(self.workspace_path),
+                session_id=self.session_id,
+                permission_mode="bypass",
+            )
 
-            result = await self._transport.send_request("compact", {
-                "sessionId": self.session_id,
-            })
+            await transport.send_user_message("/compact")
+
+            # 等待结果
+            result_text = ""
+            while True:
+                message = await transport.get_next_message(timeout=60)
+                if message is None:
+                    break
+                if message.get("type") == "result":
+                    result_text = message.get("result", "Context compacted")
+                    break
 
             return {
                 "success": True,
                 "session_id": self.session_id,
-                "result": result.get("result", "Context compacted"),
+                "result": result_text,
             }
 
-        except Exception as e:
-            logger.error(f"Compact failed: {e}")
-            raise
-
-    async def disconnect(self):
-        """断开连接"""
-        if self._transport:
-            await self._transport.disconnect()
-            self._is_connected = False
-            logger.info("ACP Agent disconnected")
+        finally:
+            await transport.disconnect()
 
     def reset_session(self):
         """重置会话"""
         self.session_id = None
         if self._permission_adapter:
             self._permission_adapter.reset_session_permissions()
-        asyncio.create_task(self.disconnect())
 
     def get_pending_permissions(self) -> list[dict]:
         """获取待处理的权限请求"""
@@ -493,11 +475,10 @@ class AcpAgent:
         return []
 
     @property
-    def is_connected(self) -> bool:
-        """是否已连接"""
-        return self._is_connected
-
-    @property
     def is_processing(self) -> bool:
         """是否正在处理"""
         return self._is_processing
+
+
+# 别名，保持兼容
+AcpAgent = ClaudeAgent
