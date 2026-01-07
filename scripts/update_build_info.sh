@@ -20,4 +20,11 @@ class BuildInfo {
 }
 DART
 
+# Also generate JSON file for API endpoint
+BUILD_INFO_JSON="static/version.json"
+mkdir -p static
+cat > "$BUILD_INFO_JSON" << JSON
+{"version":"$VERSION","buildTime":"$BUILD_TIME","gitCommit":"$GIT_COMMIT"}
+JSON
+
 echo "Updated build info: v$VERSION ($GIT_COMMIT) @ $BUILD_TIME"

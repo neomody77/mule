@@ -161,11 +161,18 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/api/version")
+async def get_version():
+    """获取客户端版本信息，用于检测更新"""
+    import json
+    version_file = Path("static/version.json")
+    if version_file.exists():
+        return json.loads(version_file.read_text())
+    return {"version": "unknown", "buildTime": "unknown", "gitCommit": "unknown"}
+
+
 # 静态文件服务 (Flutter Web)
-# 优先使用 static/ (生产), 否则使用 client/build/web/ (开发)
 static_dir = Path("static")
-if not static_dir.exists():
-    static_dir = Path("client/build/web")
 
 if static_dir.exists():
     # 挂载静态资源子目录
