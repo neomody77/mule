@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 BUILD_INFO_FILE="client/lib/config/build_info.dart"
 VERSION="1.0.0"
-BUILD_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+BUILD_TIME=$(date "+%Y-%m-%d %H:%M:00")
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 cat > "$BUILD_INFO_FILE" << DART
