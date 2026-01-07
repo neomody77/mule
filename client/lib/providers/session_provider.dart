@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -455,6 +456,49 @@ class SessionNotifier extends StateNotifier<SessionState> {
     _addMessage(sessionId, userMessage);
 
     _connectionPool.sendPrompt(sessionId, content);
+
+    _updateSession(sessionId, (s) => s.copyWith(isProcessing: true));
+  }
+
+  /// 发送带图片的消息
+  void sendImageMessage(
+    String sessionId,
+    Uint8List imageBytes,
+    String fileName, {
+    String? prompt,
+  }) {
+    final session = state.getSession(sessionId);
+    if (session == null) return;
+
+    // 根据文件名确定 MIME 类型
+    final ext = fileName.split('.').last.toLowerCase();
+    final mediaType = switch (ext) {
+      'png' => 'image/png',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      _ => 'image/jpeg', // 默认 jpeg
+    };
+
+    // 转换为 base64
+    final imageBase64 = base64Encode(imageBytes);
+
+    // 构建显示内容
+    final displayContent = prompt ?? '[Image: $fileName]';
+
+    final userMessage = ChatMessage(
+      type: MessageType.user,
+      content: displayContent,
+      isPending: true,
+      imageData: imageBytes, // 本地显示用
+    );
+    _addMessage(sessionId, userMessage);
+
+    _connectionPool.sendPromptWithImage(
+      sessionId,
+      prompt ?? 'Please analyze this image.',
+      imageBase64,
+      mediaType,
+    );
 
     _updateSession(sessionId, (s) => s.copyWith(isProcessing: true));
   }

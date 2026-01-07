@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../config/theme.dart';
 import '../models/chat_session.dart' show ChatSession, SessionConnectionState, PendingPrompt, TodoItem, TodoStatus;
@@ -40,6 +42,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   int _lastContentLength = 0;
   bool _userScrolledUp = false;
   double _lastKeyboardHeight = 0;
+  bool _isInputEmpty = true; // 追踪输入框是否为空
 
   // 判断是否在底部附近（允许半屏的误差）
   bool get _isAtBottom {
@@ -87,6 +90,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     final session = ref.read(sessionProvider).getSession(_sessionId);
     if (session != null && session.draft.isNotEmpty) {
       _inputController.text = session.draft;
+      // 同步更新输入框空状态
+      setState(() {
+        _isInputEmpty = session.draft.trim().isEmpty;
+      });
     }
   }
 
@@ -94,6 +101,14 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     // 保存草稿（避免发送后也触发保存，通过检查内容来判断）
     final content = _inputController.text;
     ref.read(sessionProvider.notifier).saveDraft(_sessionId, content);
+
+    // 更新输入框是否为空的状态
+    final isEmpty = content.trim().isEmpty;
+    if (isEmpty != _isInputEmpty) {
+      setState(() {
+        _isInputEmpty = isEmpty;
+      });
+    }
   }
 
   void _onScroll() {
@@ -583,13 +598,20 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
             ).withCommand('session.cancel', onTap: () {
               ref.read(sessionProvider.notifier).cancelTask(_sessionId);
             }),
-          // 发送按钮
-          IconButton(
-            icon: const Icon(Icons.send),
-            onPressed: isConnected ? _sendMessage : null,
-            tooltip: 'Send',
-            color: ZiaOlive.shade500,
-          ).withCommand('session.send', onTap: _sendMessage),
+          // 发送按钮 / 功能菜单按钮
+          _isInputEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  onPressed: _showFunctionMenu,
+                  tooltip: 'Menu',
+                  color: ZiaOlive.shade500,
+                ).withCommand('session.menu', onTap: _showFunctionMenu)
+              : IconButton(
+                  icon: const Icon(Icons.send),
+                  onPressed: isConnected ? _sendMessage : null,
+                  tooltip: 'Send',
+                  color: ZiaOlive.shade500,
+                ).withCommand('session.send', onTap: _sendMessage),
         ],
       ),
     );
@@ -815,5 +837,403 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
         ],
       ),
     );
+  }
+
+  /// 显示功能菜单
+  void _showFunctionMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 拖动指示器
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: ZiaOlive.shade200,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // 菜单项
+            _buildMenuItem(
+              icon: Icons.image,
+              label: 'Send Image',
+              subtitle: 'Pick from gallery or take photo',
+              onTap: () {
+                Navigator.pop(context);
+                _showImageSourcePicker();
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.folder_outlined,
+              label: 'Browse Files',
+              subtitle: 'View workspace files',
+              onTap: () {
+                Navigator.pop(context);
+                _openFileDrawer();
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.code,
+              label: 'Quick Prompts',
+              subtitle: 'Common coding commands',
+              onTap: () {
+                Navigator.pop(context);
+                _showQuickPrompts();
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.compress,
+              label: 'Compact Context',
+              subtitle: 'Summarize conversation to save tokens',
+              onTap: () {
+                Navigator.pop(context);
+                _compactContext();
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.checklist,
+              label: 'View Tasks',
+              subtitle: 'Show current todo list',
+              onTap: () {
+                Navigator.pop(context);
+                _showTodoSheet();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuItem({
+    required IconData icon,
+    required String label,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: ZiaOlive.shade100.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, color: ZiaOlive.shade500, size: 24),
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontWeight: FontWeight.w500,
+          color: ZiaOlive.shade500,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(
+          fontSize: 12,
+          color: ZiaOlive.shade300,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+
+  /// 显示快捷命令菜单
+  void _showQuickPrompts() {
+    final prompts = [
+      ('Continue', 'Continue where you left off'),
+      ('Explain', 'Explain this code'),
+      ('Fix', 'Fix the error'),
+      ('Test', 'Write tests for this'),
+      ('Refactor', 'Refactor this code'),
+      ('Review', 'Review changes'),
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 拖动指示器
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: ZiaOlive.shade200,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // 标题
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.code, size: 20, color: ZiaOlive.shade400),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Quick Prompts',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: ZiaOlive.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // 快捷命令列表
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: prompts.map((p) => ActionChip(
+                  label: Text(p.$1),
+                  avatar: Icon(
+                    _getPromptIcon(p.$1),
+                    size: 18,
+                    color: ZiaOlive.shade400,
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _inputController.text = p.$1;
+                    _sendMessage();
+                  },
+                  backgroundColor: ZiaOlive.shade100.withValues(alpha: 0.3),
+                  side: BorderSide.none,
+                )).toList(),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _getPromptIcon(String prompt) {
+    return switch (prompt) {
+      'Continue' => Icons.play_arrow,
+      'Explain' => Icons.help_outline,
+      'Fix' => Icons.build,
+      'Test' => Icons.science,
+      'Refactor' => Icons.auto_fix_high,
+      'Review' => Icons.rate_review,
+      _ => Icons.code,
+    };
+  }
+
+  /// 显示图片来源选择器
+  void _showImageSourcePicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 拖动指示器
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: ZiaOlive.shade200,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // 标题
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.image, size: 20, color: ZiaOlive.shade400),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Send Image',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: ZiaOlive.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // 选项
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: ZiaOlive.shade100.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.photo_library, color: ZiaOlive.shade500),
+              ),
+              title: Text('Photo Library', style: TextStyle(color: ZiaOlive.shade500)),
+              subtitle: Text('Choose from gallery', style: TextStyle(fontSize: 12, color: ZiaOlive.shade300)),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            // 仅在移动端显示相机选项
+            if (!kIsWeb)
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: ZiaOlive.shade100.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.camera_alt, color: ZiaOlive.shade500),
+                ),
+                title: Text('Camera', style: TextStyle(color: ZiaOlive.shade500)),
+                subtitle: Text('Take a photo', style: TextStyle(fontSize: 12, color: ZiaOlive.shade300)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 选择并发送图片
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final XFile? image = await picker.pickImage(
+        source: source,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
+
+      if (image == null) return;
+
+      // 读取图片字节
+      final bytes = await image.readAsBytes();
+      final fileName = image.name;
+
+      // 显示发送确认对话框
+      if (!mounted) return;
+      _showImagePreviewDialog(bytes, fileName);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to pick image: $e'),
+          backgroundColor: ZiaOlive.error,
+        ),
+      );
+    }
+  }
+
+  /// 显示图片预览确认对话框
+  void _showImagePreviewDialog(Uint8List bytes, String fileName) {
+    final promptController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send Image'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 图片预览
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.memory(
+                bytes,
+                width: 200,
+                height: 200,
+                fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(height: 16),
+            // 可选提示文字
+            TextField(
+              controller: promptController,
+              decoration: InputDecoration(
+                hintText: 'Add a message (optional)',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _sendImageToChat(bytes, fileName, promptController.text.trim());
+            },
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 发送图片到聊天
+  Future<void> _sendImageToChat(Uint8List bytes, String fileName, String prompt) async {
+    try {
+      // 发送图片消息
+      ref.read(sessionProvider.notifier).sendImageMessage(
+        _sessionId,
+        bytes,
+        fileName,
+        prompt: prompt.isEmpty ? null : prompt,
+      );
+
+      // 滚动到底部
+      _userScrolledUp = false;
+      _scrollToBottomIfNeeded();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Image sent'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to send image: $e'),
+          backgroundColor: ZiaOlive.error,
+        ),
+      );
+    }
   }
 }

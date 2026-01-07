@@ -186,6 +186,10 @@ class TokenRefresher:
 
                         # 同步到所有容器
                         credentials_watcher._sync_credentials()
+
+                        # 终止所有容器内的 claude 进程，让它们重新读取新 token
+                        await self._kill_claude_processes_in_containers()
+
                         return True
                     else:
                         error_text = await response.text()
@@ -198,6 +202,47 @@ class TokenRefresher:
         except Exception as e:
             logger.error(f"[TokenRefresh] Error: {e}")
             return False
+
+    async def _kill_claude_processes_in_containers(self) -> None:
+        """终止所有容器内的 claude 进程
+
+        Token 刷新后，需要终止运行中的 claude 进程，
+        下次请求时会重新启动并读取新的 credentials。
+        """
+        try:
+            # 获取所有 mule-sandbox 容器
+            result = subprocess.run(
+                ["docker", "ps", "--format", "{{.Names}}", "--filter", "name=mule-sandbox-"],
+                capture_output=True, text=True
+            )
+
+            containers = [name.strip() for name in result.stdout.strip().split('\n') if name.strip()]
+
+            if not containers:
+                logger.debug("[TokenRefresh] No active sandbox containers to update")
+                return
+
+            killed_count = 0
+            for container_name in containers:
+                try:
+                    # 在容器内终止所有 claude 进程
+                    kill_result = subprocess.run(
+                        ["docker", "exec", container_name, "pkill", "-f", "claude"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if kill_result.returncode == 0:
+                        killed_count += 1
+                        logger.debug(f"[TokenRefresh] Killed claude process in {container_name}")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"[TokenRefresh] Timeout killing claude in {container_name}")
+                except Exception as e:
+                    logger.debug(f"[TokenRefresh] Could not kill claude in {container_name}: {e}")
+
+            if killed_count > 0:
+                logger.info(f"[TokenRefresh] Killed claude processes in {killed_count} container(s) - they will restart with new token on next request")
+
+        except Exception as e:
+            logger.error(f"[TokenRefresh] Error killing claude processes: {e}")
 
     async def _update_credentials(self, token_data: dict) -> None:
         """更新 credentials 文件"""

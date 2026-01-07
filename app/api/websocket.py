@@ -1,7 +1,10 @@
 """WebSocket 实时通信模块 - 支持服务器级共享连接 + CLI 中继"""
 import asyncio
+import base64
 import json
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Optional, Set, Callable, Dict, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
@@ -21,9 +24,19 @@ def _get_agent_class():
     elif backend == "adk":
         from app.services.adk_agent import ADKAgent
         return ADKAgent
+    elif backend == "acp":
+        from app.services.acp_agent import AcpAgent
+        return AcpAgent
+    elif backend == "acp_sandbox":
+        from app.services.acp_sandbox_agent import AcpSandboxAgent
+        return AcpSandboxAgent
     else:  # 默认使用 claude
         from app.services.claude_agent import ClaudeCodeAgent
         return ClaudeCodeAgent
+
+# 导入模式管理器
+from app.services.mode_manager import mode_registry, ControlMode, ModeChangeReason
+from app.services.permission_adapter import PermissionDecision
 from app.services.message_store import message_store
 from uuid import uuid4
 from app.services.task_manager import task_manager, TaskStatus, Task
@@ -171,6 +184,8 @@ class UnifiedConnectionManager:
         根据配置 agent_backend 选择使用:
         - sandbox: Docker 沙箱隔离
         - adk: Google ADK Agent
+        - acp: ACP 协议直连
+        - acp_sandbox: ACP + Docker 沙箱
         - claude: 普通 Claude Agent (默认)
         """
         if workspace_id not in self.agents:
@@ -179,11 +194,35 @@ class UnifiedConnectionManager:
             workspace_path = settings.get_workspace_path(workspace_id)
             AgentClass = _get_agent_class()
 
-            self.agents[workspace_id][session_id] = AgentClass(
-                workspace_path=str(workspace_path),
-                workspace_id=workspace_id,
-                agent_session_id=session_id,
-            )
+            # 为 ACP 类型的 Agent 创建回调函数
+            backend = settings.agent_backend.lower()
+            if backend in ("acp", "acp_sandbox"):
+                # 事件回调：将 Agent 事件转发到 WebSocket
+                async def on_event(event: dict, ws_id=workspace_id, ss_id=session_id):
+                    await self.send_to_session(ws_id, ss_id, event)
+
+                # 权限请求回调：将权限请求转发到 WebSocket
+                async def on_permission_request(request: dict, ws_id=workspace_id, ss_id=session_id):
+                    await self.send_to_session(ws_id, ss_id, {
+                        "event": "permission_request",
+                        "data": request,
+                    })
+
+                self.agents[workspace_id][session_id] = AgentClass(
+                    workspace_path=str(workspace_path),
+                    workspace_id=workspace_id,
+                    agent_session_id=session_id,
+                    on_event=on_event,
+                    on_permission_request=on_permission_request,
+                    permission_mode=settings.acp_permission_mode,
+                )
+            else:
+                self.agents[workspace_id][session_id] = AgentClass(
+                    workspace_path=str(workspace_path),
+                    workspace_id=workspace_id,
+                    agent_session_id=session_id,
+                )
+
             logger.info(f"Created {settings.agent_backend} agent for {workspace_id}:{session_id}")
 
         return self.agents[workspace_id][session_id]
@@ -427,9 +466,58 @@ async def _handle_unsubscribe(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+def _save_image_to_workspace(workspace_id: str, image_data: dict) -> Optional[str]:
+    """保存图片到工作区，返回相对路径"""
+    try:
+        data = image_data.get("data", "")
+        media_type = image_data.get("media_type", "image/jpeg")
+
+        if not data:
+            return None
+
+        # 确定文件扩展名
+        ext_map = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/gif": "gif",
+            "image/webp": "webp",
+        }
+        ext = ext_map.get(media_type, "jpg")
+
+        # 生成文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"image_{timestamp}.{ext}"
+
+        # 保存到 .uploads 目录
+        workspace_path = settings.get_workspace_path(workspace_id)
+        uploads_dir = workspace_path / ".uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = uploads_dir / filename
+        image_bytes = base64.b64decode(data)
+        file_path.write_bytes(image_bytes)
+
+        logger.info(f"Image saved to {file_path}")
+        return f".uploads/{filename}"
+    except Exception as e:
+        logger.error(f"Failed to save image: {e}")
+        return None
+
+
 async def _handle_prompt(ctx: MessageHandlerContext) -> bool:
     """处理 prompt 消息"""
     content = ctx.data.get("content", "")
+    image = ctx.data.get("image")  # 可选的图片数据
+
+    # 如果有图片，保存并修改 prompt
+    if image:
+        image_path = _save_image_to_workspace(ctx.workspace_id, image)
+        if image_path:
+            # 将图片路径加入 prompt
+            image_prompt = f"\n\n[User attached an image: {image_path}]\nPlease read and analyze the image using the Read tool."
+            content = content + image_prompt if content else f"Please analyze this image: {image_path}"
+            logger.info(f"Image attached to prompt: {image_path}")
+
     if not content:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "error",
@@ -571,6 +659,206 @@ async def _handle_history(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+# ============== 权限响应处理 ==============
+
+async def _handle_permission_response(ctx: MessageHandlerContext) -> bool:
+    """
+    处理权限响应消息
+
+    客户端消息格式:
+    {
+        "type": "permission_response",
+        "workspace_id": "...",
+        "session_id": "...",
+        "tool_use_id": "...",
+        "decision": "approved" | "approved_for_session" | "denied" | "abort",
+        "updated_input": {...}  // 可选，修改后的输入
+    }
+    """
+    tool_use_id = ctx.data.get("tool_use_id")
+    decision = ctx.data.get("decision", "approved")
+    updated_input = ctx.data.get("updated_input")
+
+    if not tool_use_id:
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": "tool_use_id required"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+        return True
+
+    # 验证 decision
+    valid_decisions = ["approved", "approved_for_session", "denied", "abort"]
+    if decision not in valid_decisions:
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": f"Invalid decision: {decision}. Must be one of {valid_decisions}"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+        return True
+
+    # 获取 agent 并响应权限
+    agent = manager.get_or_create_agent(ctx.workspace_id, ctx.session_id)
+
+    if hasattr(agent, 'respond_permission'):
+        await agent.respond_permission(tool_use_id, decision, updated_input)
+
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "permission_responded",
+            "data": {
+                "tool_use_id": tool_use_id,
+                "decision": decision,
+            }
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+        logger.info(f"Permission responded: {tool_use_id} -> {decision}")
+    else:
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": "Agent does not support permission responses"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+    return True
+
+
+async def _handle_get_pending_permissions(ctx: MessageHandlerContext) -> bool:
+    """获取待处理的权限请求"""
+    agent = manager.get_or_create_agent(ctx.workspace_id, ctx.session_id)
+
+    pending = []
+    if hasattr(agent, 'get_pending_permissions'):
+        pending = agent.get_pending_permissions()
+
+    await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+        "event": "pending_permissions",
+        "data": {"permissions": pending}
+    }, display_workspace_id=ctx.raw_workspace_id)
+
+    return True
+
+
+# ============== 模式切换处理 ==============
+
+async def _handle_switch_mode(ctx: MessageHandlerContext) -> bool:
+    """
+    处理模式切换请求
+
+    客户端消息格式:
+    {
+        "type": "switch_mode",
+        "workspace_id": "...",
+        "session_id": "...",
+        "mode": "local" | "remote"
+    }
+    """
+    mode_str = ctx.data.get("mode", "").lower()
+
+    if mode_str not in ["local", "remote"]:
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": "Invalid mode. Must be 'local' or 'remote'"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+        return True
+
+    # 创建模式变化回调
+    async def on_mode_change(state):
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "mode_changed",
+            "data": {
+                "mode": state.mode.value,
+                "previous_mode": state.previous_mode.value if state.previous_mode else None,
+                "reason": state.reason.value,
+            }
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+    # 获取或创建模式管理器
+    mode_manager = await mode_registry.get_or_create(
+        ctx.task_key,
+        on_mode_change=on_mode_change,
+    )
+
+    # 切换模式
+    target_mode = ControlMode.LOCAL if mode_str == "local" else ControlMode.REMOTE
+    if target_mode == ControlMode.LOCAL:
+        await mode_manager.switch_to_local(ModeChangeReason.USER_REQUEST)
+    else:
+        await mode_manager.switch_to_remote(ModeChangeReason.USER_REQUEST)
+
+    logger.info(f"Mode switched to {mode_str} for {ctx.task_key}")
+
+    return True
+
+
+async def _handle_get_mode(ctx: MessageHandlerContext) -> bool:
+    """获取当前控制模式"""
+    mode_manager = mode_registry.get(ctx.task_key)
+
+    if mode_manager:
+        status = mode_manager.get_status()
+    else:
+        status = {
+            "mode": "remote",
+            "remote_connections": 0,
+            "local_active": False,
+        }
+
+    await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+        "event": "mode_status",
+        "data": status
+    }, display_workspace_id=ctx.raw_workspace_id)
+
+    return True
+
+
+async def _handle_request_handoff(ctx: MessageHandlerContext) -> bool:
+    """
+    请求控制权交接
+
+    客户端消息格式:
+    {
+        "type": "request_handoff",
+        "workspace_id": "...",
+        "session_id": "...",
+        "to_mode": "local" | "remote"
+    }
+    """
+    to_mode_str = ctx.data.get("to_mode", "").lower()
+
+    if to_mode_str not in ["local", "remote"]:
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": "Invalid to_mode. Must be 'local' or 'remote'"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+        return True
+
+    # 创建模式变化回调
+    async def on_mode_change(state):
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "mode_changed",
+            "data": {
+                "mode": state.mode.value,
+                "previous_mode": state.previous_mode.value if state.previous_mode else None,
+                "reason": state.reason.value,
+            }
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+    mode_manager = await mode_registry.get_or_create(
+        ctx.task_key,
+        on_mode_change=on_mode_change,
+    )
+
+    to_mode = ControlMode.LOCAL if to_mode_str == "local" else ControlMode.REMOTE
+    success = await mode_manager.request_handoff(to_mode)
+
+    await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+        "event": "handoff_result",
+        "data": {
+            "success": success,
+            "current_mode": mode_manager.current_mode.value,
+        }
+    }, display_workspace_id=ctx.raw_workspace_id)
+
+    return True
+
+
 # 消息处理器映射
 _MESSAGE_HANDLERS: Dict[str, Any] = {
     "ping": _handle_ping,
@@ -581,6 +869,13 @@ _MESSAGE_HANDLERS: Dict[str, Any] = {
     "cancel": _handle_cancel,
     "compact": _handle_compact,
     "history": _handle_history,
+    # 权限相关
+    "permission_response": _handle_permission_response,
+    "get_pending_permissions": _handle_get_pending_permissions,
+    # 模式切换相关
+    "switch_mode": _handle_switch_mode,
+    "get_mode": _handle_get_mode,
+    "request_handoff": _handle_request_handoff,
 }
 
 
