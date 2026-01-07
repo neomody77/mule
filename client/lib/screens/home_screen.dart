@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 
 import '../config/theme.dart';
@@ -1645,7 +1646,7 @@ class _WorkspaceListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
+    final tile = ListTile(
       onTap: onTap,
       leading: Container(
         width: 44,
@@ -1718,33 +1719,31 @@ class _WorkspaceListTile extends StatelessWidget {
           ),
         ],
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      trailing: Icon(Icons.chevron_right, color: ZiaOlive.shade300),
+    );
+
+    // 如果不能删除，直接返回 tile
+    if (onDelete == null) {
+      return tile;
+    }
+
+    // 使用 Slidable 包裹，左划显示删除按钮
+    return Slidable(
+      key: ValueKey(data.workspaceId),
+      endActionPane: ActionPane(
+        motion: const BehindMotion(),
+        extentRatio: 0.25,
         children: [
-          Icon(Icons.chevron_right, color: ZiaOlive.shade300),
-          if (onDelete != null)
-            PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, size: 20, color: ZiaOlive.shade300),
-              onSelected: (value) {
-                if (value == 'delete') {
-                  onDelete!();
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                      SizedBox(width: 8),
-                      Text('Delete', style: TextStyle(color: Colors.red)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          SlidableAction(
+            onPressed: (_) => onDelete!(),
+            backgroundColor: ZiaOlive.error,
+            foregroundColor: Colors.white,
+            icon: Icons.delete_outline,
+            label: 'Delete',
+          ),
         ],
       ),
+      child: tile,
     );
   }
 }

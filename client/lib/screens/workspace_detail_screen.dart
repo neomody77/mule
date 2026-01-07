@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 
 import '../config/theme.dart';
@@ -290,7 +291,7 @@ class _SessionListTile extends StatelessWidget {
     final isProcessing = session.isProcessing;
     final hasUnread = session.hasUnread;
 
-    return ListTile(
+    final tile = ListTile(
       onTap: onTap,
       leading: isProcessing
           ? const SizedBox(
@@ -347,50 +348,39 @@ class _SessionListTile extends StatelessWidget {
               ),
             )
           : null,
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      trailing: Text(
+        _formatTime(session.lastActiveAt),
+        style: TextStyle(
+          fontSize: 12,
+          color: ZiaOlive.shade200,
+        ),
+      ),
+    );
+
+    // 使用 Slidable 包裹，左划显示操作按钮
+    return Slidable(
+      key: ValueKey(session.id),
+      endActionPane: ActionPane(
+        motion: const BehindMotion(),
+        extentRatio: 0.4,
         children: [
-          Text(
-            _formatTime(session.lastActiveAt),
-            style: TextStyle(
-              fontSize: 12,
-              color: ZiaOlive.shade200,
-            ),
+          SlidableAction(
+            onPressed: (_) => onRename(),
+            backgroundColor: ZiaOlive.shade400,
+            foregroundColor: Colors.white,
+            icon: Icons.edit_outlined,
+            label: 'Rename',
           ),
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert, color: ZiaOlive.shade300),
-            onSelected: (value) {
-              if (value == 'rename') {
-                onRename();
-              } else if (value == 'delete') {
-                onDelete();
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'rename',
-                child: Row(
-                  children: [
-                    Icon(Icons.edit_outlined, size: 18),
-                    SizedBox(width: 8),
-                    Text('Rename'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                    const SizedBox(width: 8),
-                    const Text('Delete', style: TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
-            ],
+          SlidableAction(
+            onPressed: (_) => onDelete(),
+            backgroundColor: ZiaOlive.error,
+            foregroundColor: Colors.white,
+            icon: Icons.delete_outline,
+            label: 'Delete',
           ),
         ],
       ),
+      child: tile,
     );
   }
 
