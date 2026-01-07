@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../config/theme.dart';
+import '../config/build_info.dart';
 import '../models/server_config.dart';
 import '../providers/providers.dart';
 import '../router.dart';
@@ -237,10 +238,18 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                       ),
                       Text(
-                        'Version 1.0.0',
+                        'v${BuildInfo.version} (${BuildInfo.gitCommit})',
                         style: TextStyle(
                           color: labelColor,
                           fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Built: ${BuildInfo.buildTime}',
+                        style: TextStyle(
+                          color: labelColor,
+                          fontSize: 11,
                         ),
                       ),
                     ],
