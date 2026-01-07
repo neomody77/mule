@@ -292,12 +292,12 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                         ),
                       ),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 8),
                     GestureDetector(
                       onTap: _showRenameDialog,
                       child: Icon(Icons.edit, size: 16, color: ZiaOlive.shade300),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 8),
                     GestureDetector(
                       onTap: _generateTitle,
                       child: Icon(Icons.auto_awesome, size: 16, color: ZiaOlive.shade300),
