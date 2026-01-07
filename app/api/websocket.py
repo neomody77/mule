@@ -884,6 +884,35 @@ async def _handle_request_handoff(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+def _get_claude_cli_messages(session_id: str) -> list[dict]:
+    """从 Claude CLI 原生存储获取消息"""
+    import json
+    claude_projects_dir = Path.home() / ".claude" / "projects"
+    if not claude_projects_dir.exists():
+        return []
+
+    # 搜索所有项目目录找到 session 文件
+    for project_dir in claude_projects_dir.iterdir():
+        if project_dir.is_dir():
+            session_file = project_dir / f"{session_id}.jsonl"
+            if session_file.exists():
+                messages = []
+                try:
+                    with open(session_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    messages.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    continue
+                    return messages
+                except Exception as e:
+                    logger.error(f"Failed to read CLI session file: {e}")
+                    return []
+    return []
+
+
 async def _handle_generate_title(ctx: MessageHandlerContext) -> bool:
     """
     手动触发 AI 生成会话标题
@@ -902,8 +931,12 @@ async def _handle_generate_title(ctx: MessageHandlerContext) -> bool:
         })
         return True
 
-    # 获取会话消息历史
+    # 获取会话消息历史 - 先尝试 message_store，再尝试 Claude CLI 原生存储
     messages = message_store.get_messages(ctx.workspace_id, ctx.session_id)
+    if not messages:
+        # 尝试从 Claude CLI 原生存储读取
+        messages = _get_claude_cli_messages(ctx.session_id)
+
     if not messages:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "error",
