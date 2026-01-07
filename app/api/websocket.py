@@ -589,13 +589,38 @@ async def _handle_sync(ctx: MessageHandlerContext) -> bool:
 
 
 async def _handle_cancel(ctx: MessageHandlerContext) -> bool:
-    """处理 cancel 消息"""
+    """处理 cancel 消息 - 取消当前任务并清空待处理队列"""
     current_task = task_manager.get_current_task(ctx.task_key)
+
+    # 清空 pending prompts 队列
+    cleared_prompts = []
+    if ctx.task_key in manager.pending_prompts:
+        cleared_prompts = manager.pending_prompts[ctx.task_key]
+        manager.pending_prompts[ctx.task_key] = []
+
     if current_task:
         task_manager.cancel_task(current_task.id)
+
+        # 返回被清空的 prompt 内容，让客户端可以恢复到输入框
+        cleared_contents = [content for _, content in cleared_prompts]
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
             "event": "status",
-            "data": {"type": "cancelled", "message": "Task cancelled"}
+            "data": {
+                "type": "cancelled",
+                "message": "Task cancelled",
+                "cleared_prompts": cleared_contents,
+            }
+        }, display_workspace_id=ctx.raw_workspace_id)
+    elif cleared_prompts:
+        # 没有运行中的任务，但有队列中的 prompts 被清空
+        cleared_contents = [content for _, content in cleared_prompts]
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "status",
+            "data": {
+                "type": "cancelled",
+                "message": "Queued prompts cleared",
+                "cleared_prompts": cleared_contents,
+            }
         }, display_workspace_id=ctx.raw_workspace_id)
     else:
         await manager.send_to_session(ctx.workspace_id, ctx.session_id, {

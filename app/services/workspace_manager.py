@@ -74,6 +74,9 @@ class WorkspaceManager:
         claudeignore_path = workspace_path / ".claudeignore"
         claudeignore_path.write_text(".workspace_meta.json\n.claudeignore\n")
 
+        # 创建 CLAUDE.md 配置文件
+        self._create_claude_settings(workspace_path)
+
         now = datetime.now()
         meta = {
             "id": workspace_id,
@@ -92,6 +95,17 @@ class WorkspaceManager:
             updated_at=now,
             path=str(workspace_path),
         )
+
+    def _create_claude_settings(self, workspace_path: Path):
+        """创建 .claude/settings.json 配置文件"""
+        claude_dir = workspace_path / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+
+        settings_path = claude_dir / "settings.json"
+        if not settings_path.exists():
+            settings_path.write_text(json.dumps({
+                "includeCoAuthoredBy": False
+            }, indent=2))
 
     def create_workspace_with_id(
         self,
@@ -120,6 +134,9 @@ class WorkspaceManager:
         claudeignore_path = workspace_path / ".claudeignore"
         if not claudeignore_path.exists():
             claudeignore_path.write_text(".workspace_meta.json\n.claudeignore\n")
+
+        # 创建 CLAUDE.md 配置文件
+        self._create_claude_settings(workspace_path)
 
         now = datetime.now()
         meta = {
@@ -686,6 +703,9 @@ class WorkspaceManager:
         claudeignore_path = workspace_path / ".claudeignore"
         if not claudeignore_path.exists():
             claudeignore_path.write_text(".workspace_meta.json\n.claudeignore\n")
+
+        # 创建 CLAUDE.md 配置文件
+        self._create_claude_settings(workspace_path)
 
         now = datetime.now()
         meta = {
