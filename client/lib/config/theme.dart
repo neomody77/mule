@@ -113,6 +113,11 @@ class MuleTheme {
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
+      textSelectionTheme: TextSelectionThemeData(
+        selectionColor: ZiaOlive.shade500.withOpacity(0.4),
+        cursorColor: ZiaOlive.shade500,
+        selectionHandleColor: ZiaOlive.shade500,
+      ),
     );
   }
 
@@ -206,6 +211,11 @@ class MuleTheme {
         contentTextStyle: const TextStyle(color: Colors.white),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      textSelectionTheme: TextSelectionThemeData(
+        selectionColor: ZiaOlive.shade300.withOpacity(0.5),
+        cursorColor: ZiaOlive.shade300,
+        selectionHandleColor: ZiaOlive.shade300,
       ),
     );
   }

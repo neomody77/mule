@@ -902,6 +902,55 @@ class SessionNotifier extends StateNotifier<SessionState> {
       }
       return updated;
     });
+
+    // 连接断开或出错时，重置所有消息的加载状态
+    if (change.state == WsConnectionState.disconnected ||
+        change.state == WsConnectionState.error) {
+      _resetMessageStates(change.sessionId);
+    }
+  }
+
+  /// 重置消息中的加载状态（isStreaming, isExecuting）
+  void _resetMessageStates(String sessionId) {
+    final index = state.sessions.indexWhere((s) => s.id == sessionId);
+    if (index < 0) return;
+
+    final newSessions = [...state.sessions];
+    final session = newSessions[index];
+    bool hasChanges = false;
+
+    for (int i = 0; i < session.messages.length; i++) {
+      final msg = session.messages[i];
+
+      // 重置 isStreaming 状态
+      if (msg.isStreaming) {
+        session.messages[i] = msg.copyWith(isStreaming: false);
+        hasChanges = true;
+      }
+
+      // 重置 tool call 的 isExecuting 状态
+      if (msg.toolCalls.any((tc) => tc.isExecuting)) {
+        final updatedToolCalls = msg.toolCalls.map((tc) {
+          if (tc.isExecuting) {
+            return tc.copyWith(isExecuting: false);
+          }
+          return tc;
+        }).toList();
+        session.messages[i] = session.messages[i].copyWith(toolCalls: updatedToolCalls);
+        hasChanges = true;
+      }
+    }
+
+    // 移除 status 类型的消息（如 "Thinking..."）
+    final originalLength = session.messages.length;
+    session.messages.removeWhere((m) => m.type == MessageType.status && m.isStreaming);
+    if (session.messages.length != originalLength) {
+      hasChanges = true;
+    }
+
+    if (hasChanges) {
+      state = state.copyWith(sessions: newSessions);
+    }
   }
 
   void _addMessage(String sessionId, ChatMessage message) {
