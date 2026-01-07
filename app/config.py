@@ -65,9 +65,12 @@ class Settings(BaseSettings):
     use_sandbox: bool = False  # 是否使用 Docker 沙箱隔离 workspace
     sandbox_image: str = "mule-workspace:latest"  # 沙箱容器镜像
 
-    # Agent 后端配置: claude, sandbox, adk
-    agent_backend: str = "claude"  # claude=直接使用SDK, sandbox=Docker隔离, adk=Google ADK
+    # Agent 后端配置: claude, sandbox, adk, acp, acp_sandbox
+    agent_backend: str = "claude"  # claude=SDK, sandbox=Docker, adk=Gemini, acp=ACP协议, acp_sandbox=ACP+Docker
     adk_model: str = "gemini-2.0-flash"  # Google ADK 使用的模型
+
+    # ACP Agent 配置
+    acp_permission_mode: str = "remote"  # remote=远程审批, bypass=跳过权限, local=本地交互
 
     # GitHub CLI 配置传递（仅 sandbox 模式）
     share_gh_config: bool = False  # 是否将宿主机 gh 配置传递给容器
