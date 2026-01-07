@@ -209,52 +209,110 @@ class SettingsScreen extends ConsumerWidget {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: borderColor, width: 0.5),
             ),
-            padding: const EdgeInsets.all(16),
-            child: Row(
+            child: Column(
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: ZiaOlive.shade500.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    Icons.code,
-                    color: ZiaOlive.shade500,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
                     children: [
-                      const Text(
-                        'Mule',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: ZiaOlive.shade500.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.code,
+                          color: ZiaOlive.shade500,
+                          size: 20,
                         ),
                       ),
-                      Text(
-                        'v${BuildInfo.version} (${BuildInfo.gitCommit})',
-                        style: TextStyle(
-                          color: labelColor,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Built: ${BuildInfo.buildTime}',
-                        style: TextStyle(
-                          color: labelColor,
-                          fontSize: 11,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Mule',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                              ),
+                            ),
+                            Text(
+                              'v${BuildInfo.version} (${BuildInfo.gitCommit})',
+                              style: TextStyle(
+                                color: labelColor,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Built: ${BuildInfo.buildTime}',
+                              style: TextStyle(
+                                color: labelColor,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
+                // Clear Cache button (Web only)
+                if (kIsWeb)
+                  Container(
+                    decoration: BoxDecoration(
+                      border: Border(top: BorderSide(color: borderColor, width: 0.5)),
+                    ),
+                    child: InkWell(
+                      onTap: () => _clearCache(context),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.cleaning_services_outlined,
+                                color: Colors.orange,
+                                size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Clear Cache & Reload',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Force update to latest version',
+                                    style: TextStyle(
+                                      color: labelColor,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -262,6 +320,51 @@ class SettingsScreen extends ConsumerWidget {
       ),
       ),
     );
+  }
+
+  Future<void> _clearCache(BuildContext context) async {
+    if (!kIsWeb) return;
+
+    try {
+      // Show loading indicator
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clearing cache...')),
+      );
+
+      // Unregister service workers and clear caches using JS interop
+      await html.window.navigator.serviceWorker?.getRegistrations().then((registrations) async {
+        for (final registration in registrations) {
+          await registration.unregister();
+        }
+      });
+
+      // Clear caches
+      final cacheStorage = html.window.caches;
+      if (cacheStorage != null) {
+        final keys = await cacheStorage.keys();
+        for (final key in keys) {
+          await cacheStorage.delete(key);
+        }
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cache cleared! Reloading...')),
+        );
+      }
+
+      // Reload the page after a short delay
+      await Future.delayed(const Duration(milliseconds: 500));
+      html.window.location.reload();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error clearing cache: $e')),
+        );
+      }
+    }
   }
 
   Widget _buildSectionHeader(String title, Color color) {
