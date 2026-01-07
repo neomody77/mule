@@ -135,6 +135,30 @@ class _MessageBubbleState extends State<MessageBubble> {
 
   Widget _buildContent(BuildContext context, bool isUser, Color textColor) {
     if (isUser) {
+      // 如果有图片，先显示图片
+      if (message.hasImage) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.memory(
+                message.imageData!,
+                width: 200,
+                height: 200,
+                fit: BoxFit.cover,
+              ),
+            ),
+            if (message.content.isNotEmpty && !message.content.startsWith('[Image:')) ...[
+              const SizedBox(height: 8),
+              Text(
+                message.content,
+                style: TextStyle(color: textColor),
+              ),
+            ],
+          ],
+        );
+      }
       return Text(
         message.content,
         style: TextStyle(
