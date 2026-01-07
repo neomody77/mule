@@ -43,6 +43,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   bool _userScrolledUp = false;
   double _lastKeyboardHeight = 0;
   bool _isInputEmpty = true; // 追踪输入框是否为空
+  String _lastDraft = ''; // 追踪 draft 变化（用于取消后恢复）
 
   // 判断是否在底部附近（允许半屏的误差）
   bool get _isAtBottom {
@@ -246,6 +247,18 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     _lastMessageCount = currentMessageCount;
     _lastContentLength = currentContentLength;
 
+    // 检测 draft 变化（取消任务后恢复 pending prompts 到输入框）
+    final currentDraft = session?.draft ?? '';
+    if (currentDraft != _lastDraft && currentDraft.isNotEmpty && _inputController.text.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _inputController.text.isEmpty) {
+          _inputController.text = currentDraft;
+          _inputController.selection = TextSelection.collapsed(offset: currentDraft.length);
+        }
+      });
+    }
+    _lastDraft = currentDraft;
+
     return ScreenScope(
       screenId: 'session',
       child: Scaffold(
@@ -342,6 +355,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                         },
                       ),
           ),
+
+          // Pending prompts（固定在输入栏上方）
+          if (session != null && session.pendingPrompts.isNotEmpty)
+            _buildPendingPrompts(session.pendingPrompts),
 
           // 输入栏
           _buildInputBar(session),
