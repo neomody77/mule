@@ -27,6 +27,25 @@ class WorkspaceDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _WorkspaceDetailScreenState extends ConsumerState<WorkspaceDetailScreen> {
+  // 用于关闭所有打开的 Slidable
+  final _openSlidableControllers = <SlidableController>[];
+
+  void _registerSlidableController(SlidableController controller) {
+    _openSlidableControllers.add(controller);
+  }
+
+  void _unregisterSlidableController(SlidableController controller) {
+    _openSlidableControllers.remove(controller);
+  }
+
+  void _closeAllSlidables() {
+    for (final controller in _openSlidableControllers) {
+      if (controller.animation.value > 0) {
+        controller.close();
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -201,9 +220,12 @@ class _WorkspaceDetailScreenState extends ConsumerState<WorkspaceDetailScreen> {
             ),
           ],
         ),
-        body: sessions.isEmpty
-            ? _buildEmptySessions()
-            : _buildSessionsList(sessions),
+        body: GestureDetector(
+          onTap: _closeAllSlidables,
+          child: sessions.isEmpty
+              ? _buildEmptySessions()
+              : _buildSessionsList(sessions),
+        ),
         floatingActionButton: FloatingActionButton(
           onPressed: _createNewSession,
           tooltip: 'New Session',
@@ -253,46 +275,161 @@ class _WorkspaceDetailScreenState extends ConsumerState<WorkspaceDetailScreen> {
           widget.workspace.name,
         );
       },
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: sessions.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final session = sessions[index];
-          return _SessionListTile(
-            session: session,
-            onTap: () => _openSession(session),
-            onRename: () => _showRenameDialog(session),
-            onDelete: () => _confirmDeleteSession(session),
-          );
-        },
+      child: SlidableAutoCloseBehavior(
+        closeWhenTapped: true,
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: sessions.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final session = sessions[index];
+            return _SessionListTile(
+              session: session,
+              onTap: () => _openSession(session),
+              onRename: () => _showRenameDialog(session),
+              onDelete: () => _confirmDeleteSession(session),
+              onRegisterController: _registerSlidableController,
+              onUnregisterController: _unregisterSlidableController,
+            );
+          },
+        ),
       ),
     );
   }
 }
 
 /// Session 列表项
-class _SessionListTile extends StatelessWidget {
+class _SessionListTile extends StatefulWidget {
   final ChatSession session;
   final VoidCallback onTap;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final void Function(SlidableController)? onRegisterController;
+  final void Function(SlidableController)? onUnregisterController;
 
   const _SessionListTile({
     required this.session,
     required this.onTap,
     required this.onRename,
     required this.onDelete,
+    this.onRegisterController,
+    this.onUnregisterController,
   });
 
   @override
+  State<_SessionListTile> createState() => _SessionListTileState();
+}
+
+class _SessionListTileState extends State<_SessionListTile> with TickerProviderStateMixin {
+  bool _confirmingDelete = false;
+  late final SlidableController _slidableController;
+
+  @override
+  void initState() {
+    super.initState();
+    _slidableController = SlidableController(this);
+    // 注册控制器
+    widget.onRegisterController?.call(_slidableController);
+    // 监听关闭事件，重置确认状态
+    _slidableController.animation.addStatusListener((status) {
+      if (status == AnimationStatus.dismissed && _confirmingDelete) {
+        setState(() => _confirmingDelete = false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.onUnregisterController?.call(_slidableController);
+    _slidableController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildActionPane() {
+    // 使用 AnimatedSwitcher 实现平滑过渡
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 200),
+      child: _confirmingDelete
+          ? GestureDetector(
+              key: const ValueKey('confirm'),
+              behavior: HitTestBehavior.opaque, // 阻止事件冒泡
+              onTap: widget.onDelete,
+              child: Container(
+                color: ZiaOlive.error,
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.delete_outline, color: Colors.white),
+                      SizedBox(height: 4),
+                      Text('Delete', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : Row(
+              key: const ValueKey('actions'),
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque, // 阻止事件冒泡
+                    onTap: widget.onRename,
+                    child: Container(
+                      color: ZiaOlive.shade400,
+                      child: const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.edit_outlined, color: Colors.white),
+                            SizedBox(height: 4),
+                            Text('Rename', style: TextStyle(color: Colors.white, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque, // 阻止事件冒泡
+                    onTap: () {
+                      setState(() => _confirmingDelete = true);
+                    },
+                    child: Container(
+                      color: ZiaOlive.error,
+                      child: const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.delete_outline, color: Colors.white),
+                            SizedBox(height: 4),
+                            Text('Delete', style: TextStyle(color: Colors.white, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  void _resetConfirmState() {
+    if (_confirmingDelete) {
+      setState(() => _confirmingDelete = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isConnected = session.connectionState == SessionConnectionState.connected;
-    final isProcessing = session.isProcessing;
-    final hasUnread = session.hasUnread;
+    final isConnected = widget.session.connectionState == SessionConnectionState.connected;
+    final isProcessing = widget.session.isProcessing;
+    final hasUnread = widget.session.hasUnread;
 
     final tile = ListTile(
-      onTap: onTap,
+      onTap: widget.onTap,
       leading: isProcessing
           ? const SizedBox(
               width: 24,
@@ -311,7 +448,7 @@ class _SessionListTile extends StatelessWidget {
         children: [
           Flexible(
             child: Text(
-              session.name,
+              widget.session.name,
               style: TextStyle(
                 fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w500,
               ),
@@ -338,9 +475,9 @@ class _SessionListTile extends StatelessWidget {
           ],
         ],
       ),
-      subtitle: session.messages.isNotEmpty
+      subtitle: widget.session.messages.isNotEmpty
           ? Text(
-              _getLastMessagePreview(session),
+              _getLastMessagePreview(widget.session),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -349,7 +486,7 @@ class _SessionListTile extends StatelessWidget {
             )
           : null,
       trailing: Text(
-        _formatTime(session.lastActiveAt),
+        _formatTime(widget.session.lastActiveAt),
         style: TextStyle(
           fontSize: 12,
           color: ZiaOlive.shade200,
@@ -359,25 +496,15 @@ class _SessionListTile extends StatelessWidget {
 
     // 使用 Slidable 包裹，左划显示操作按钮
     return Slidable(
-      key: ValueKey(session.id),
+      key: ValueKey(widget.session.id),
+      controller: _slidableController,
+      groupTag: 'sessions',
+      closeOnScroll: true,
       endActionPane: ActionPane(
-        motion: const BehindMotion(),
-        extentRatio: 0.4,
+        motion: const DrawerMotion(),
+        extentRatio: 0.35,
         children: [
-          SlidableAction(
-            onPressed: (_) => onRename(),
-            backgroundColor: ZiaOlive.shade400,
-            foregroundColor: Colors.white,
-            icon: Icons.edit_outlined,
-            label: 'Rename',
-          ),
-          SlidableAction(
-            onPressed: (_) => onDelete(),
-            backgroundColor: ZiaOlive.error,
-            foregroundColor: Colors.white,
-            icon: Icons.delete_outline,
-            label: 'Delete',
-          ),
+          Expanded(child: _buildActionPane()),
         ],
       ),
       child: tile,

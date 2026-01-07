@@ -23,6 +23,25 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // 用于关闭所有打开的 Slidable
+  final _openSlidableControllers = <SlidableController>[];
+
+  void _registerSlidableController(SlidableController controller) {
+    _openSlidableControllers.add(controller);
+  }
+
+  void _unregisterSlidableController(SlidableController controller) {
+    _openSlidableControllers.remove(controller);
+  }
+
+  void _closeAllSlidables() {
+    for (final controller in _openSlidableControllers) {
+      if (controller.animation.value > 0) {
+        controller.close();
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -308,11 +327,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ],
         ),
-        body: serverState.servers.isEmpty
-            ? _buildEmptyServers()
-            : viewMode == WorkspaceViewMode.card
-                ? _buildWorkspaceCards(serverState, sessionState)
-                : _buildWorkspaceList(serverState, sessionState),
+        body: GestureDetector(
+          onTap: _closeAllSlidables,
+          child: serverState.servers.isEmpty
+              ? _buildEmptyServers()
+              : viewMode == WorkspaceViewMode.card
+                  ? _buildWorkspaceCards(serverState, sessionState)
+                  : _buildWorkspaceList(serverState, sessionState),
+        ),
         floatingActionButton: serverState.servers.isEmpty
             ? null
             : FloatingActionButton(
@@ -498,25 +520,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
         await _syncAllSessions(serverWorkspaces);
       },
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: workspaceList.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final data = workspaceList[index];
-          return _WorkspaceListTile(
-            data: data,
-            onTap: () {
-              context.push(AppRoutes.workspacePath(
-                data.server.id,
-                data.workspaceId,
-              ));
-            },
-            onDelete: data.workspaceId != 'default'
-                ? () => _confirmDeleteWorkspace(data)
-                : null,
-          );
-        },
+      child: SlidableAutoCloseBehavior(
+        closeWhenTapped: true,
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: workspaceList.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final data = workspaceList[index];
+            return _WorkspaceListTile(
+              data: data,
+              onTap: () {
+                context.push(AppRoutes.workspacePath(
+                  data.server.id,
+                  data.workspaceId,
+                ));
+              },
+              onDelete: data.workspaceId != 'default'
+                  ? () => _confirmDeleteWorkspace(data)
+                  : null,
+              onRestart: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Restarting worker...'), duration: Duration(seconds: 2)),
+                );
+              },
+              onRegisterController: _registerSlidableController,
+              onUnregisterController: _unregisterSlidableController,
+            );
+          },
+        ),
       ),
     );
   }
@@ -1633,21 +1665,139 @@ class _CreateWorkspaceSheetState extends ConsumerState<_CreateWorkspaceSheet> {
 }
 
 /// Workspace 列表项（用于列表视图模式）
-class _WorkspaceListTile extends StatelessWidget {
+class _WorkspaceListTile extends ConsumerStatefulWidget {
   final _WorkspaceCardData data;
   final VoidCallback onTap;
   final VoidCallback? onDelete;
+  final VoidCallback? onRestart;
+  final void Function(SlidableController)? onRegisterController;
+  final void Function(SlidableController)? onUnregisterController;
 
   const _WorkspaceListTile({
     required this.data,
     required this.onTap,
     this.onDelete,
+    this.onRestart,
+    this.onRegisterController,
+    this.onUnregisterController,
   });
+
+  @override
+  ConsumerState<_WorkspaceListTile> createState() => _WorkspaceListTileState();
+}
+
+class _WorkspaceListTileState extends ConsumerState<_WorkspaceListTile> with TickerProviderStateMixin {
+  bool _confirmingDelete = false;
+  late final SlidableController _slidableController;
+
+  @override
+  void initState() {
+    super.initState();
+    _slidableController = SlidableController(this);
+    // 注册控制器
+    widget.onRegisterController?.call(_slidableController);
+    // 监听关闭事件，重置确认状态
+    _slidableController.animation.addStatusListener((status) {
+      if (status == AnimationStatus.dismissed && _confirmingDelete) {
+        setState(() => _confirmingDelete = false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.onUnregisterController?.call(_slidableController);
+    _slidableController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildActionPane() {
+    // 使用 AnimatedSwitcher 实现平滑过渡
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 200),
+      child: _confirmingDelete
+          ? GestureDetector(
+              key: const ValueKey('confirm'),
+              behavior: HitTestBehavior.opaque, // 阻止事件冒泡
+              onTap: () async {
+                await ref.read(serverProvider.notifier).deleteWorkspace(
+                  widget.data.server.id,
+                  widget.data.workspaceId,
+                );
+              },
+              child: Container(
+                color: ZiaOlive.error,
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.delete_outline, color: Colors.white),
+                      SizedBox(height: 4),
+                      Text('Delete', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : Row(
+              key: const ValueKey('actions'),
+              children: [
+                if (widget.onRestart != null)
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque, // 阻止事件冒泡
+                      onTap: widget.onRestart,
+                      child: Container(
+                        color: ZiaOlive.shade400,
+                        child: const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.refresh, color: Colors.white),
+                              SizedBox(height: 4),
+                              Text('Restart', style: TextStyle(color: Colors.white, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque, // 阻止事件冒泡
+                    onTap: () {
+                      setState(() => _confirmingDelete = true);
+                    },
+                    child: Container(
+                      color: ZiaOlive.error,
+                      child: const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.delete_outline, color: Colors.white),
+                            SizedBox(height: 4),
+                            Text('Delete', style: TextStyle(color: Colors.white, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  void _resetConfirmState() {
+    if (_confirmingDelete) {
+      setState(() => _confirmingDelete = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final tile = ListTile(
-      onTap: onTap,
+      onTap: widget.onTap,
       leading: Container(
         width: 44,
         height: 44,
@@ -1656,7 +1806,7 @@ class _WorkspaceListTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(
-          data.workspaceId == 'default'
+          widget.data.workspaceId == 'default'
               ? Icons.home_outlined
               : Icons.folder_outlined,
           color: ZiaOlive.shade500,
@@ -1666,12 +1816,12 @@ class _WorkspaceListTile extends StatelessWidget {
         children: [
           Flexible(
             child: Text(
-              data.workspaceName,
+              widget.data.workspaceName,
               style: const TextStyle(fontWeight: FontWeight.w600),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (data.workspaceId == 'default') ...[
+          if (widget.data.workspaceId == 'default') ...[
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1698,12 +1848,12 @@ class _WorkspaceListTile extends StatelessWidget {
             height: 6,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: data.isServerOnline ? ZiaOlive.success : ZiaOlive.error,
+              color: widget.data.isServerOnline ? ZiaOlive.success : ZiaOlive.error,
             ),
           ),
           const SizedBox(width: 4),
           Text(
-            data.server.name,
+            widget.data.server.name,
             style: TextStyle(
               fontSize: 12,
               color: ZiaOlive.shade200,
@@ -1711,7 +1861,7 @@ class _WorkspaceListTile extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Text(
-            '${data.sessions.length} session${data.sessions.length == 1 ? '' : 's'}',
+            '${widget.data.sessions.length} session${widget.data.sessions.length == 1 ? '' : 's'}',
             style: TextStyle(
               fontSize: 12,
               color: ZiaOlive.shade300,
@@ -1723,24 +1873,22 @@ class _WorkspaceListTile extends StatelessWidget {
     );
 
     // 如果不能删除，直接返回 tile
-    if (onDelete == null) {
+    if (widget.onDelete == null) {
       return tile;
     }
 
-    // 使用 Slidable 包裹，左划显示删除按钮
+    // 使用 Slidable 包裹，左划显示操作按钮
+    // DrawerMotion: 操作区域从右边滑出覆盖在内容上方
     return Slidable(
-      key: ValueKey(data.workspaceId),
+      key: ValueKey(widget.data.workspaceId),
+      controller: _slidableController,
+      groupTag: 'workspaces',
+      closeOnScroll: true,
       endActionPane: ActionPane(
-        motion: const BehindMotion(),
-        extentRatio: 0.25,
+        motion: const DrawerMotion(),
+        extentRatio: 0.35,
         children: [
-          SlidableAction(
-            onPressed: (_) => onDelete!(),
-            backgroundColor: ZiaOlive.error,
-            foregroundColor: Colors.white,
-            icon: Icons.delete_outline,
-            label: 'Delete',
-          ),
+          Expanded(child: _buildActionPane()),
         ],
       ),
       child: tile,
