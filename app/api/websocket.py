@@ -968,6 +968,74 @@ async def _handle_generate_title(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+async def _handle_feedback(ctx: MessageHandlerContext):
+    """
+    处理反馈请求 - 保存当前 session 状态用于问题分析
+
+    客户端消息格式:
+    {
+        "type": "feedback",
+        "workspace_id": "...",
+        "session_id": "...",
+        "comment": "可选的用户备注"
+    }
+    """
+    if not ctx.workspace_id or not ctx.session_id:
+        await manager.send_to_connection(ctx.conn_id, {
+            "event": "error",
+            "data": {"message": "workspace_id and session_id required"}
+        })
+        return
+
+    comment = ctx.data.get("comment", "")
+
+    try:
+        # 保存反馈状态
+        feedback_dir = settings.data_dir / "feedback"
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+
+        # 获取当前 session 信息
+        session_info = message_store.get_session(ctx.workspace_id, ctx.session_id)
+
+        # 获取消息历史
+        messages = message_store.get_messages(ctx.workspace_id, ctx.session_id)
+
+        # 获取任务状态
+        task = task_manager.get_task(ctx.workspace_id, ctx.session_id)
+        task_info = task.to_dict() if task else None
+
+        # 构建反馈记录
+        feedback_record = {
+            "timestamp": datetime.now().isoformat(),
+            "workspace_id": ctx.workspace_id,
+            "session_id": ctx.session_id,
+            "comment": comment,
+            "session_info": session_info.to_dict() if session_info else None,
+            "task_status": task_info,
+            "message_count": len(messages),
+            "last_messages": messages[-20:] if messages else [],  # 最近20条消息
+        }
+
+        # 保存到文件
+        feedback_file = feedback_dir / f"{ctx.workspace_id}_{ctx.session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(feedback_file, "w", encoding="utf-8") as f:
+            json.dump(feedback_record, f, ensure_ascii=False, indent=2, default=str)
+
+        logger.info(f"Feedback saved: {feedback_file}")
+
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "feedback_saved",
+            "data": {"message": "Session state saved for analysis", "file": str(feedback_file.name)}
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+    except Exception as e:
+        logger.error(f"Failed to save feedback: {e}")
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": f"Failed to save feedback: {e}"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+
 # 消息处理器映射
 _MESSAGE_HANDLERS: Dict[str, Any] = {
     "ping": _handle_ping,
@@ -987,6 +1055,8 @@ _MESSAGE_HANDLERS: Dict[str, Any] = {
     "request_handoff": _handle_request_handoff,
     # 标题生成
     "generate_title": _handle_generate_title,
+    # 反馈
+    "feedback": _handle_feedback,
 }
 
 
