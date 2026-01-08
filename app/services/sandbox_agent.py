@@ -331,10 +331,10 @@ class TokenRefresher:
 token_refresher = TokenRefresher()
 
 
-def get_container_name(workspace_id: str, session_id: str) -> str:
-    """生成容器名称"""
-    hash_input = f"{workspace_id}:{session_id}"
-    hash_value = hashlib.md5(hash_input.encode()).hexdigest()[:8]
+def get_container_name(workspace_id: str) -> str:
+    """生成容器名称 - 每个 workspace 一个容器"""
+    # 使用 workspace_id 的 hash 作为容器名（避免特殊字符问题）
+    hash_value = hashlib.md5(workspace_id.encode()).hexdigest()[:8]
     return f"mule-sandbox-{hash_value}"
 
 
@@ -343,8 +343,13 @@ class SandboxAgent:
 
     在 Docker 容器中运行 Claude Code，提供安全的代码执行环境。
 
+    容器策略：
+    - 每个 workspace 一个容器（多个 session 共享）
+    - 同一 workspace 的 session 通过 docker exec 进入同一容器
+    - 容器内环境（安装的包等）在 session 间共享
+
     认证策略：
-    - 每个容器有独立的 .claude 目录（避免 projects/ 冲突）
+    - 每个 workspace 容器有独立的 .claude 目录
     - 从宿主机复制认证文件 .credentials.json 和 .claude.json
     - 容器内的 .claude 目录可读写
     """
@@ -353,9 +358,9 @@ class SandboxAgent:
         self.workspace_path = Path(workspace_path).resolve()
         self.workspace_id = workspace_id
         self.agent_session_id = agent_session_id
-        self.container_name = get_container_name(workspace_id, agent_session_id)
+        self.container_name = get_container_name(workspace_id)
 
-        # 容器专属的 .claude 目录（持久化）
+        # 容器专属的 .claude 目录（持久化，每个 workspace 共享）
         self.container_claude_dir = CONTAINER_DATA_DIR / self.container_name / ".claude"
 
         # 容器内的会话 ID
