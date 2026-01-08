@@ -305,7 +305,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                   ],
                 ),
           actions: [
-            // Todo 按钮 - 有任务时显示
+            // Todo 按钮 - 有任务时显示 badge
             if (session != null && session.todos.isNotEmpty)
               IconButton(
                 icon: Badge(
@@ -316,24 +316,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                 onPressed: _showTodoSheet,
                 tooltip: 'Tasks',
               ),
-            // Clear 按钮
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              onPressed: _confirmClearMessages,
-              tooltip: 'Clear Messages',
-            ),
-            // Compact 按钮
-            IconButton(
-              icon: const Icon(Icons.compress),
-              onPressed: _compactContext,
-              tooltip: 'Compact Context',
-            ),
-            // Files 按钮
-            IconButton(
-              icon: const Icon(Icons.folder_outlined),
-              onPressed: _openFileDrawer,
-              tooltip: 'Files',
-            ),
           ],
         ),
         body: Column(
@@ -887,6 +869,16 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
 
   /// 显示功能菜单
   void _showFunctionMenu() {
+    final menuItems = [
+      (Icons.add_comment, 'New Session', () { Navigator.pop(context); _createNewSession(); }),
+      (Icons.image, 'Image', () { Navigator.pop(context); _showImageSourcePicker(); }),
+      (Icons.folder_outlined, 'Files', () { Navigator.pop(context); _openFileDrawer(); }),
+      (Icons.code, 'Prompts', () { Navigator.pop(context); _showQuickPrompts(); }),
+      (Icons.compress, 'Compact', () { Navigator.pop(context); _compactContext(); }),
+      (Icons.checklist, 'Tasks', () { Navigator.pop(context); _showTodoSheet(); }),
+      (Icons.bug_report_outlined, 'Report', () { Navigator.pop(context); _sendFeedback(); }),
+    ];
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -899,7 +891,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           children: [
             // 拖动指示器
             Container(
-              margin: const EdgeInsets.symmetric(vertical: 8),
+              margin: const EdgeInsets.symmetric(vertical: 12),
               width: 40,
               height: 4,
               decoration: BoxDecoration(
@@ -907,98 +899,68 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            // 菜单项
-            _buildMenuItem(
-              icon: Icons.image,
-              label: 'Send Image',
-              subtitle: 'Pick from gallery or take photo',
-              onTap: () {
-                Navigator.pop(context);
-                _showImageSourcePicker();
-              },
+            // 网格菜单
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  mainAxisSpacing: 16,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 0.85,
+                ),
+                itemCount: menuItems.length,
+                itemBuilder: (context, index) {
+                  final item = menuItems[index];
+                  return _buildGridMenuItem(
+                    icon: item.$1,
+                    label: item.$2,
+                    onTap: item.$3,
+                  );
+                },
+              ),
             ),
-            _buildMenuItem(
-              icon: Icons.folder_outlined,
-              label: 'Browse Files',
-              subtitle: 'View workspace files',
-              onTap: () {
-                Navigator.pop(context);
-                _openFileDrawer();
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.code,
-              label: 'Quick Prompts',
-              subtitle: 'Common coding commands',
-              onTap: () {
-                Navigator.pop(context);
-                _showQuickPrompts();
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.compress,
-              label: 'Compact Context',
-              subtitle: 'Summarize conversation to save tokens',
-              onTap: () {
-                Navigator.pop(context);
-                _compactContext();
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.checklist,
-              label: 'View Tasks',
-              subtitle: 'Show current todo list',
-              onTap: () {
-                Navigator.pop(context);
-                _showTodoSheet();
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.bug_report_outlined,
-              label: 'Report Issue',
-              subtitle: 'Save session state for debugging',
-              onTap: () {
-                Navigator.pop(context);
-                _sendFeedback();
-              },
-            ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMenuItem({
+  Widget _buildGridMenuItem({
     required IconData icon,
     required String label,
-    required String subtitle,
     required VoidCallback onTap,
   }) {
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: ZiaOlive.shade100.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(icon, color: ZiaOlive.shade500, size: 24),
-      ),
-      title: Text(
-        label,
-        style: TextStyle(
-          fontWeight: FontWeight.w500,
-          color: ZiaOlive.shade500,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(
-          fontSize: 12,
-          color: ZiaOlive.shade300,
-        ),
-      ),
+    return GestureDetector(
       onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: ZiaOlive.shade100.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: ZiaOlive.shade500, size: 26),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: ZiaOlive.shade400,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 
@@ -1107,6 +1069,24 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+  /// 创建同 workspace 的新 session
+  void _createNewSession() async {
+    final session = await ref.read(sessionProvider.notifier).createSession(
+      serverId: widget.server.id,
+      workspaceId: widget.session.workspaceId,
+      workspaceName: widget.session.workspaceName,
+    );
+
+    if (mounted) {
+      ref.read(sessionProvider.notifier).setActiveSession(session.id);
+      context.pushReplacement(AppRoutes.sessionPath(
+        widget.server.id,
+        widget.session.workspaceId,
+        session.id,
+      ));
+    }
   }
 
   /// 显示图片来源选择器
