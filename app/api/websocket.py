@@ -1001,7 +1001,8 @@ async def _handle_feedback(ctx: MessageHandlerContext):
         messages = message_store.get_messages(ctx.workspace_id, ctx.session_id)
 
         # 获取任务状态
-        task = task_manager.get_task(ctx.workspace_id, ctx.session_id)
+        task_id = f"{ctx.workspace_id}:{ctx.session_id}"
+        task = task_manager.get_task(task_id)
         task_info = task.to_dict() if task else None
 
         # 构建反馈记录

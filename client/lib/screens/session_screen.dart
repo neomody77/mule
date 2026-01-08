@@ -1096,7 +1096,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
 
   /// 发送反馈（保存当前会话状态用于调试）
   void _sendFeedback() {
-    final connectionPool = ref.read(connectionPoolProvider);
+    final connectionPool = ref.read(sessionProvider.notifier).connectionPool;
     connectionPool.sendFeedback(_sessionId);
 
     // 显示提示
