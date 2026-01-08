@@ -32,7 +32,8 @@ CONTAINER_CONFIG = {
     "cpu_period": 100000,        # CPU 周期
     "cpu_quota": 100000,         # CPU 配额 (100% 单核)
     "network_mode": "bridge",    # 网络模式 (需要访问 API)
-    "security_opt": ["no-new-privileges"],  # 禁止提权
+    # 注意: 不使用 no-new-privileges，因为 sudo 需要 setuid 提权
+    # 容器隔离本身已经提供了安全边界
 }
 
 
