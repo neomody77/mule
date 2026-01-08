@@ -227,6 +227,26 @@ class AcpAgent:
                             error=result.get("error") if is_error else None
                         )
 
+                    # 提取 usage 信息
+                    usage_data = {}
+                    raw_usage = result.get("usage")
+                    if raw_usage and isinstance(raw_usage, dict):
+                        total_input = 0
+                        total_output = 0
+                        context_window = 200000
+                        for model_name, model_usage in raw_usage.items():
+                            if isinstance(model_usage, dict):
+                                total_input += model_usage.get("inputTokens", 0)
+                                total_output += model_usage.get("outputTokens", 0)
+                                total_input += model_usage.get("cacheReadInputTokens", 0)
+                                if model_usage.get("contextWindow"):
+                                    context_window = model_usage["contextWindow"]
+                        usage_data = {
+                            "input_tokens": total_input,
+                            "output_tokens": total_output,
+                            "context_window": context_window,
+                        }
+
                     yield {
                         "event": "message_end",
                         "data": {
@@ -236,6 +256,7 @@ class AcpAgent:
                             "duration_ms": result.get("durationMs", 0),
                             "num_turns": result.get("numTurns", 0),
                             "total_cost_usd": result.get("totalCostUsd", 0),
+                            "usage": usage_data,
                         }
                     }
 

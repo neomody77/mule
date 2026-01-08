@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 
 import '../config/theme.dart';
 import '../models/chat_session.dart' show ChatSession, SessionConnectionState, PendingPrompt, TodoItem, TodoStatus;
@@ -341,6 +342,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           // 面包屑导航
           _buildBreadcrumb(),
 
+          // Context 使用率指示器
+          if (session != null && session.inputTokens > 0)
+            _buildContextUsageBar(session),
+
           // 消息列表
           Expanded(
             child: session == null
@@ -399,6 +404,122 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           Text(
             widget.session.workspaceName,
             style: TextStyle(fontSize: 12, color: ZiaOlive.shade300),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContextUsageBar(ChatSession session) {
+    final usage = session.contextUsage;
+    final color = usage > 0.9
+        ? Colors.red
+        : usage > 0.7
+            ? Colors.orange
+            : Colors.green;
+
+    return GestureDetector(
+      onTap: () => _showContextUsageDialog(session),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).dividerColor,
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.memory, size: 14, color: ZiaOlive.shade300),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: usage.clamp(0.0, 1.0),
+                  backgroundColor: ZiaOlive.shade100,
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                  minHeight: 4,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              session.contextUsagePercent,
+              style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w500),
+            ),
+            if (session.autoCompact) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.auto_mode, size: 12, color: ZiaOlive.shade300),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showContextUsageDialog(ChatSession session) {
+    final numberFormat = NumberFormat('#,###');
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Context Usage'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildUsageRow('Input tokens', numberFormat.format(session.inputTokens)),
+            _buildUsageRow('Output tokens', numberFormat.format(session.outputTokens)),
+            _buildUsageRow('Context window', numberFormat.format(session.contextWindow)),
+            const Divider(),
+            _buildUsageRow('Usage', session.contextUsagePercent, bold: true),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: const Text('Auto-compact'),
+              subtitle: const Text('Automatically compact when >80%'),
+              value: session.autoCompact,
+              onChanged: (value) {
+                ref.read(sessionProvider.notifier).toggleAutoCompact(_sessionId);
+                Navigator.pop(context);
+              },
+              contentPadding: EdgeInsets.zero,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          if (session.contextUsage > 0.5)
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _compactContext();
+              },
+              child: const Text('Compact Now'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUsageRow(String label, String value, {bool bold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              fontFamily: 'monospace',
+            ),
           ),
         ],
       ),

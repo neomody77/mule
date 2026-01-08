@@ -256,6 +256,26 @@ class ClaudeCodeAgent:
                             error=message.result if message.is_error else None
                         )
 
+                    # 提取 usage 信息
+                    usage_data = {}
+                    if message.usage:
+                        # usage 是 dict[model_name, ModelUsage]
+                        total_input = 0
+                        total_output = 0
+                        context_window = 200000  # 默认值
+                        for model_name, model_usage in message.usage.items():
+                            if isinstance(model_usage, dict):
+                                total_input += model_usage.get("inputTokens", 0)
+                                total_output += model_usage.get("outputTokens", 0)
+                                total_input += model_usage.get("cacheReadInputTokens", 0)
+                                if model_usage.get("contextWindow"):
+                                    context_window = model_usage["contextWindow"]
+                        usage_data = {
+                            "input_tokens": total_input,
+                            "output_tokens": total_output,
+                            "context_window": context_window,
+                        }
+
                     yield {
                         "event": "message_end",
                         "data": {
@@ -265,6 +285,7 @@ class ClaudeCodeAgent:
                             "is_error": message.is_error,
                             "result": message.result or '',
                             "total_cost_usd": message.total_cost_usd,
+                            "usage": usage_data,
                         }
                     }
                     self.session_id = message.session_id

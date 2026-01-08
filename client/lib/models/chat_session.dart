@@ -74,6 +74,11 @@ class ChatSession {
   bool deleted; // 是否已软删除
   DateTime? deletedAt; // 删除时间
   String draft; // 输入框草稿内容
+  // Context usage 信息
+  int inputTokens; // 当前 input tokens
+  int outputTokens; // 当前 output tokens
+  int contextWindow; // Context window 大小
+  bool autoCompact; // 是否启用自动压缩
 
   ChatSession({
     required this.id,
@@ -95,6 +100,10 @@ class ChatSession {
     this.deleted = false,
     this.deletedAt,
     this.draft = '',
+    this.inputTokens = 0,
+    this.outputTokens = 0,
+    this.contextWindow = 200000,
+    this.autoCompact = false,
   })  : createdAt = createdAt ?? DateTime.now(),
         lastActiveAt = lastActiveAt ?? DateTime.now(),
         messages = messages ?? [],
@@ -103,6 +112,12 @@ class ChatSession {
 
   /// 是否已连接
   bool get isConnected => connectionState == SessionConnectionState.connected;
+
+  /// Context 使用率 (0.0 - 1.0)
+  double get contextUsage => contextWindow > 0 ? inputTokens / contextWindow : 0.0;
+
+  /// Context 使用百分比字符串
+  String get contextUsagePercent => '${(contextUsage * 100).toStringAsFixed(1)}%';
 
   /// 添加消息
   void addMessage(ChatMessage message) {
@@ -179,6 +194,10 @@ class ChatSession {
     DateTime? deletedAt,
     bool clearDeletedAt = false,
     String? draft,
+    int? inputTokens,
+    int? outputTokens,
+    int? contextWindow,
+    bool? autoCompact,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -200,6 +219,10 @@ class ChatSession {
       deleted: deleted ?? this.deleted,
       deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
       draft: draft ?? this.draft,
+      inputTokens: inputTokens ?? this.inputTokens,
+      outputTokens: outputTokens ?? this.outputTokens,
+      contextWindow: contextWindow ?? this.contextWindow,
+      autoCompact: autoCompact ?? this.autoCompact,
     );
   }
 

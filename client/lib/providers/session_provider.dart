@@ -545,8 +545,19 @@ class SessionNotifier extends StateNotifier<SessionState> {
   void resetSession(String sessionId) {
     // 先清除本地消息
     clearMessages(sessionId);
+    // 重置 token 计数
+    _updateSession(sessionId, (s) => s.copyWith(
+      inputTokens: 0,
+      outputTokens: 0,
+    ));
     // 发送 reset 请求给服务端
     _connectionPool.sendReset(sessionId);
+  }
+
+  /// 切换自动压缩
+  void toggleAutoCompact(String sessionId) {
+    _updateSession(sessionId, (s) => s.copyWith(autoCompact: !s.autoCompact));
+    _save();
   }
 
   // 事件处理器映射
@@ -554,7 +565,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     'text_delta': _handleTextDelta,
     'tool_use_start': _handleToolStart,
     'tool_result': _handleToolResult,
-    'message_end': (sid, _) => _handleMessageEnd(sid),
+    'message_end': _handleMessageEnd,
     'error': _handleError,
     'task_info': _handleTaskInfo,
     'status': _handleStatus,
@@ -715,7 +726,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     }
   }
 
-  void _handleMessageEnd(String sessionId) {
+  void _handleMessageEnd(String sessionId, Map<String, dynamic> data) {
     final session = state.getSession(sessionId);
     if (session == null) return;
 
@@ -728,7 +739,32 @@ class SessionNotifier extends StateNotifier<SessionState> {
     // 停止最后一条消息的 streaming 状态
     _updateLastMessage(sessionId, (m) => m.copyWith(isStreaming: false));
 
-    _updateSession(sessionId, (s) => s.copyWith(isProcessing: false));
+    // 提取 usage 信息
+    final usage = data['usage'] as Map<String, dynamic>?;
+    int? inputTokens;
+    int? outputTokens;
+    int? contextWindow;
+    if (usage != null) {
+      inputTokens = usage['input_tokens'] as int?;
+      outputTokens = usage['output_tokens'] as int?;
+      contextWindow = usage['context_window'] as int?;
+    }
+
+    _updateSession(sessionId, (s) {
+      final updated = s.copyWith(
+        isProcessing: false,
+        inputTokens: inputTokens ?? s.inputTokens,
+        outputTokens: outputTokens ?? s.outputTokens,
+        contextWindow: contextWindow ?? s.contextWindow,
+      );
+
+      // 自动压缩：如果启用且使用率超过 80%
+      if (updated.autoCompact && updated.contextUsage > 0.8) {
+        Future.microtask(() => compactContext(sessionId));
+      }
+
+      return updated;
+    });
   }
 
   void _handleError(String sessionId, Map<String, dynamic> data) {

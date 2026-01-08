@@ -633,6 +633,26 @@ class SandboxAgent:
                                 "data": {"text": "⚠️ **OAuth token expired or invalid.**\n\nPlease provide new credentials:\n1. Copy `~/.claude/.credentials.json` from another machine, OR\n2. Run `claude` on the host to login and get new tokens\n\nThe credentials watcher will auto-detect changes.\n\n"}
                             }
 
+                        # 提取 usage 信息
+                        usage_data = {}
+                        raw_usage = event.get("usage")
+                        if raw_usage and isinstance(raw_usage, dict):
+                            total_input = 0
+                            total_output = 0
+                            context_window = 200000
+                            for model_name, model_usage in raw_usage.items():
+                                if isinstance(model_usage, dict):
+                                    total_input += model_usage.get("inputTokens", 0)
+                                    total_output += model_usage.get("outputTokens", 0)
+                                    total_input += model_usage.get("cacheReadInputTokens", 0)
+                                    if model_usage.get("contextWindow"):
+                                        context_window = model_usage["contextWindow"]
+                            usage_data = {
+                                "input_tokens": total_input,
+                                "output_tokens": total_output,
+                                "context_window": context_window,
+                            }
+
                         yield {
                             "event": "message_end",
                             "data": {
@@ -642,6 +662,7 @@ class SandboxAgent:
                                 "is_error": is_error,
                                 "result": result_text,
                                 "total_cost_usd": event.get("total_cost_usd", 0),
+                                "usage": usage_data,
                             }
                         }
 
