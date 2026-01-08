@@ -908,17 +908,43 @@ class SessionNotifier extends StateNotifier<SessionState> {
       WsConnectionState.error => SessionConnectionState.error,
     };
 
+    // 先检查是否需要在重连后同步
+    final session = state.sessions.where((s) => s.id == change.sessionId).firstOrNull;
+    final shouldSyncAfterReconnect = session != null &&
+        change.state == WsConnectionState.connected &&
+        session.wasProcessingBeforeDisconnect;
+
     _updateSession(change.sessionId, (s) {
       var updated = s.copyWith(
         connectionState: sessionState,
         error: change.state == WsConnectionState.error ? 'Connection error' : null,
       );
+
+      // 断开连接时，保存当前处理状态以便重连后同步
       if (change.state == WsConnectionState.disconnected ||
           change.state == WsConnectionState.error) {
-        updated = updated.copyWith(isProcessing: false);
+        if (s.isProcessing) {
+          // 标记断开前正在处理，用于重连后同步
+          updated = updated.copyWith(
+            isProcessing: false,
+            wasProcessingBeforeDisconnect: true,
+          );
+        }
       }
+
+      // 重连成功后，清除标记
+      if (change.state == WsConnectionState.connected && s.wasProcessingBeforeDisconnect) {
+        updated = updated.copyWith(wasProcessingBeforeDisconnect: false);
+      }
+
       return updated;
     });
+
+    // 在 _updateSession 之后发送 sync 请求（避免在回调内产生副作用）
+    if (shouldSyncAfterReconnect) {
+      debugPrint('[SessionNotifier] Reconnected, syncing task status for session ${change.sessionId}');
+      _connectionPool.sendSync(change.sessionId);
+    }
   }
 
   void _addMessage(String sessionId, ChatMessage message) {

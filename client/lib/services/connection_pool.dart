@@ -438,6 +438,19 @@ class ConnectionPool {
     });
   }
 
+  /// 发送反馈请求（一键保存当前状态）
+  void sendFeedback(String sessionId, {String? comment}) {
+    final sub = _findSubscription(sessionId);
+    if (sub == null) return;
+
+    _sendToServer(sub.serverId, {
+      'type': 'feedback',
+      'workspace_id': sub.workspaceId,
+      'session_id': sub.sessionId,
+      if (comment != null) 'comment': comment,
+    });
+  }
+
   /// 发送 ping (通过 serverId)
   void sendPing(String serverId) {
     _sendToServer(serverId, {'type': 'ping'});

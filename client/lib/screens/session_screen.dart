@@ -953,6 +953,15 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                 _showTodoSheet();
               },
             ),
+            _buildMenuItem(
+              icon: Icons.bug_report_outlined,
+              label: 'Report Issue',
+              subtitle: 'Save session state for debugging',
+              onTap: () {
+                Navigator.pop(context);
+                _sendFeedback();
+              },
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -1083,6 +1092,21 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
       'Review' => Icons.rate_review,
       _ => Icons.code,
     };
+  }
+
+  /// 发送反馈（保存当前会话状态用于调试）
+  void _sendFeedback() {
+    final connectionPool = ref.read(connectionPoolProvider);
+    connectionPool.sendFeedback(_sessionId);
+
+    // 显示提示
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Session state saved for analysis'),
+        backgroundColor: ZiaOlive.shade500,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   /// 显示图片来源选择器

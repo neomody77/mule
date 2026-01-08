@@ -416,6 +416,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return _buildNoWorkspaces();
     }
 
+    // 收集所有活跃会话（正在处理或已连接）
+    final activeSessions = <ChatSession>[];
+    for (final data in workspaceList) {
+      for (final session in data.sessions) {
+        if (session.isProcessing || session.connectionState == SessionConnectionState.connected) {
+          activeSessions.add(session);
+        }
+      }
+    }
+    // 按最后活跃时间排序
+    activeSessions.sort((a, b) => b.lastActiveAt.compareTo(a.lastActiveAt));
+
     return RefreshIndicator(
       onRefresh: () async {
         final serverWorkspaces = await ref.read(serverProvider.notifier).refreshAllServers();
@@ -424,9 +436,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       },
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: workspaceList.length,
+        // 如果有活跃会话，在 default workspace 后面插入一个活跃会话卡片
+        itemCount: workspaceList.length + (activeSessions.isNotEmpty ? 1 : 0),
         itemBuilder: (context, index) {
-          final data = workspaceList[index];
+          // 找到 default workspace 的索引
+          final defaultIndex = workspaceList.indexWhere((w) => w.workspaceId == 'default');
+          final activeCardIndex = defaultIndex >= 0 ? defaultIndex + 1 : 0;
+
+          // 如果有活跃会话且当前是活跃会话卡片的位置
+          if (activeSessions.isNotEmpty && index == activeCardIndex) {
+            return _ActiveSessionsCard(
+              sessions: activeSessions,
+              serverState: serverState,
+              onOpenSession: _openSession,
+            );
+          }
+
+          // 调整实际的 workspace 索引
+          final workspaceIndex = activeSessions.isNotEmpty && index > activeCardIndex
+              ? index - 1
+              : index;
+
+          final data = workspaceList[workspaceIndex];
           return _WorkspaceCard(
             data: data,
             onNewSession: () => _showNewSessionDialog(
@@ -680,6 +711,345 @@ class _WorkspaceCardData {
     required this.sessions,
     required this.isServerOnline,
   });
+}
+
+/// 活跃会话聚合卡片
+class _ActiveSessionsCard extends ConsumerWidget {
+  final List<ChatSession> sessions;
+  final ServerState serverState;
+  final void Function(ChatSession) onOpenSession;
+
+  const _ActiveSessionsCard({
+    required this.sessions,
+    required this.serverState,
+    required this.onOpenSession,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = isDark ? ZiaOlive.shade700 : ZiaOlive.shade100;
+
+    // 从 Riverpod 读取展开状态
+    final isExpanded = ref.watch(activeSessionsExpandedProvider);
+
+    // 统计正在处理的会话数
+    final processingCount = sessions.where((s) => s.isProcessing).length;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 卡片头部
+          InkWell(
+            onTap: () {
+              ref.read(uiStateProvider.notifier).toggleActiveSessionsExpanded();
+            },
+            borderRadius: isExpanded
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+              decoration: BoxDecoration(
+                border: isExpanded
+                    ? Border(bottom: BorderSide(color: borderColor, width: 0.5))
+                    : null,
+              ),
+              child: Row(
+                children: [
+                  // 展开/折叠指示器
+                  AnimatedRotation(
+                    turns: isExpanded ? 0.25 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.chevron_right,
+                      size: 20,
+                      color: ZiaOlive.shade300,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // 图标
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: ZiaOlive.success.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Stack(
+                      children: [
+                        Center(
+                          child: Icon(
+                            Icons.flash_on,
+                            color: ZiaOlive.success,
+                            size: 20,
+                          ),
+                        ),
+                        if (processingCount > 0)
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: Colors.orange,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Theme.of(context).cardColor,
+                                  width: 1.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              'Active Sessions',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: ZiaOlive.success.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '${sessions.length}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: ZiaOlive.success,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            if (processingCount > 0) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 10,
+                                      height: 10,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 1.5,
+                                        color: Colors.orange,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '$processingCount',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.orange,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        Text(
+                          'Quick access to connected sessions',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: ZiaOlive.shade200,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Sessions 列表（可折叠）
+          AnimatedCrossFade(
+            firstChild: _buildSessionsList(context, borderColor),
+            secondChild: const SizedBox.shrink(),
+            crossFadeState: isExpanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSessionsList(BuildContext context, Color borderColor) {
+    return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: sessions.length,
+      separatorBuilder: (_, __) => Divider(
+        height: 1,
+        indent: 16,
+        endIndent: 16,
+        color: borderColor,
+      ),
+      itemBuilder: (context, index) {
+        final session = sessions[index];
+        final server = serverState.getServer(session.serverId);
+        final isProcessing = session.isProcessing;
+        final hasUnread = session.hasUnread;
+
+        return InkWell(
+          onTap: () => onOpenSession(session),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                // 状态指示
+                if (isProcessing)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: ZiaOlive.success,
+                    ),
+                  ),
+                const SizedBox(width: 12),
+
+                // Session 信息
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              session.name,
+                              style: TextStyle(
+                                fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w500,
+                                fontSize: 14,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (hasUnread) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Text(
+                                'NEW',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          // Workspace 名称
+                          Icon(
+                            Icons.folder_outlined,
+                            size: 12,
+                            color: ZiaOlive.shade300,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            session.workspaceName,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: ZiaOlive.shade300,
+                            ),
+                          ),
+                          if (server != null) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 4,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: ZiaOlive.shade200,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              server.name,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: ZiaOlive.shade200,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // 时间
+                Text(
+                  _formatTime(session.lastActiveAt),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: ZiaOlive.shade200,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _formatTime(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    if (diff.inMinutes < 1) return 'now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m';
+    if (diff.inDays < 1) return '${diff.inHours}h';
+    if (diff.inDays < 7) return '${diff.inDays}d';
+    return '${time.month}/${time.day}';
+  }
 }
 
 /// Workspace 卡片组件（支持折叠，使用 Riverpod 持久化）

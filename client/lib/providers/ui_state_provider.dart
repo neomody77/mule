@@ -18,18 +18,24 @@ class UIState {
   /// workspace 视图模式
   final WorkspaceViewMode workspaceViewMode;
 
+  /// 活跃会话卡片展开状态
+  final bool activeSessionsExpanded;
+
   const UIState({
     this.workspaceExpanded = const {},
     this.workspaceViewMode = WorkspaceViewMode.card,
+    this.activeSessionsExpanded = true,
   });
 
   UIState copyWith({
     Map<String, bool>? workspaceExpanded,
     WorkspaceViewMode? workspaceViewMode,
+    bool? activeSessionsExpanded,
   }) {
     return UIState(
       workspaceExpanded: workspaceExpanded ?? this.workspaceExpanded,
       workspaceViewMode: workspaceViewMode ?? this.workspaceViewMode,
+      activeSessionsExpanded: activeSessionsExpanded ?? this.activeSessionsExpanded,
     );
   }
 
@@ -59,9 +65,11 @@ class UIStateNotifier extends StateNotifier<UIState> {
         final viewMode = viewModeStr == 'list'
             ? WorkspaceViewMode.list
             : WorkspaceViewMode.card;
+        final activeSessionsExpanded = data['activeSessionsExpanded'] as bool? ?? true;
         state = state.copyWith(
           workspaceExpanded: expanded,
           workspaceViewMode: viewMode,
+          activeSessionsExpanded: activeSessionsExpanded,
         );
       }
     } catch (e) {
@@ -76,6 +84,7 @@ class UIStateNotifier extends StateNotifier<UIState> {
       final data = {
         'workspaceExpanded': state.workspaceExpanded,
         'workspaceViewMode': state.workspaceViewMode.name,
+        'activeSessionsExpanded': state.activeSessionsExpanded,
       };
       await prefs.setString(_storageKey, jsonEncode(data));
     } catch (e) {
@@ -129,6 +138,18 @@ class UIStateNotifier extends StateNotifier<UIState> {
     state = state.copyWith(workspaceViewMode: mode);
     _save();
   }
+
+  /// 切换活跃会话卡片展开状态
+  void toggleActiveSessionsExpanded() {
+    state = state.copyWith(activeSessionsExpanded: !state.activeSessionsExpanded);
+    _save();
+  }
+
+  /// 设置活跃会话卡片展开状态
+  void setActiveSessionsExpanded(bool expanded) {
+    state = state.copyWith(activeSessionsExpanded: expanded);
+    _save();
+  }
 }
 
 /// UI 状态 Provider
@@ -142,4 +163,10 @@ final uiStateProvider = StateNotifierProvider<UIStateNotifier, UIState>((ref) {
 final workspaceExpandedProvider = Provider.family<bool, ({String serverId, String workspaceId})>((ref, params) {
   final uiState = ref.watch(uiStateProvider);
   return uiState.isWorkspaceExpanded(params.serverId, params.workspaceId);
+});
+
+/// 便捷 Provider: 获取活跃会话卡片的展开状态
+final activeSessionsExpandedProvider = Provider<bool>((ref) {
+  final uiState = ref.watch(uiStateProvider);
+  return uiState.activeSessionsExpanded;
 });
