@@ -316,11 +316,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
                 onPressed: _showTodoSheet,
                 tooltip: 'Tasks',
               ),
-            // Clear 按钮
+            // Reset 按钮
             IconButton(
-              icon: const Icon(Icons.delete_outline),
+              icon: const Icon(Icons.restart_alt),
               onPressed: _confirmClearMessages,
-              tooltip: 'Clear Messages',
+              tooltip: 'Reset Session',
             ),
             // Compact 按钮
             IconButton(
@@ -806,8 +806,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear Messages'),
-        content: const Text('Clear all messages in this session?'),
+        title: const Text('Reset Session'),
+        content: const Text('Clear all messages and reset context? This will start a fresh conversation.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -815,11 +815,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
           ),
           FilledButton(
             onPressed: () {
-              final session = ref.read(sessionProvider).getSession(_sessionId);
-              session?.clearMessages();
+              ref.read(sessionProvider.notifier).resetSession(_sessionId);
               Navigator.pop(context);
             },
-            child: const Text('Clear'),
+            child: const Text('Reset'),
           ),
         ],
       ),

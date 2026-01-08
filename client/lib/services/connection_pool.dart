@@ -426,6 +426,18 @@ class ConnectionPool {
     });
   }
 
+  /// 发送重置会话请求（清空上下文）
+  void sendReset(String sessionId) {
+    final sub = _findSubscription(sessionId);
+    if (sub == null) return;
+
+    _sendToServer(sub.serverId, {
+      'type': 'reset',
+      'workspace_id': sub.workspaceId,
+      'session_id': sub.sessionId,
+    });
+  }
+
   /// 发送生成标题请求
   void sendGenerateTitle(String sessionId) {
     final sub = _findSubscription(sessionId);

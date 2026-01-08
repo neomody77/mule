@@ -541,6 +541,14 @@ class SessionNotifier extends StateNotifier<SessionState> {
     }
   }
 
+  /// 重置会话（清空上下文）
+  void resetSession(String sessionId) {
+    // 先清除本地消息
+    clearMessages(sessionId);
+    // 发送 reset 请求给服务端
+    _connectionPool.sendReset(sessionId);
+  }
+
   // 事件处理器映射
   late final Map<String, void Function(String, Map<String, dynamic>)> _eventHandlers = {
     'text_delta': _handleTextDelta,

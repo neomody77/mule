@@ -664,6 +664,38 @@ async def _handle_compact(ctx: MessageHandlerContext) -> bool:
     return True
 
 
+async def _handle_reset(ctx: MessageHandlerContext) -> bool:
+    """处理 reset 消息 - 重置会话上下文"""
+    agent = manager.get_or_create_agent(ctx.workspace_id, ctx.session_id)
+
+    # 检查 agent 是否支持 reset_session
+    if not hasattr(agent, 'reset_session'):
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": "Agent does not support reset"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+        return True
+
+    try:
+        agent.reset_session()
+        # 同时清除消息存储
+        message_store.clear_messages(ctx.workspace_id, ctx.session_id)
+
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "status",
+            "data": {"type": "reset_done", "message": "Session reset successfully"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+        logger.info(f"Session reset: {ctx.workspace_id}/{ctx.session_id}")
+    except Exception as e:
+        logger.error(f"Reset failed: {e}")
+        await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+            "event": "error",
+            "data": {"message": f"Reset failed: {str(e)}"}
+        }, display_workspace_id=ctx.raw_workspace_id)
+
+    return True
+
+
 async def _handle_history(ctx: MessageHandlerContext) -> bool:
     """处理 history 消息"""
     from_index = ctx.data.get("from_index", 0)
@@ -1046,6 +1078,7 @@ _MESSAGE_HANDLERS: Dict[str, Any] = {
     "sync": _handle_sync,
     "cancel": _handle_cancel,
     "compact": _handle_compact,
+    "reset": _handle_reset,
     "history": _handle_history,
     # 权限相关
     "permission_response": _handle_permission_response,
