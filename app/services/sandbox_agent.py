@@ -452,8 +452,7 @@ class SandboxAgent:
             # 资源限制
             "--memory", "2g",
             "--cpus", "1",
-            # 安全选项
-            "--security-opt", "no-new-privileges",
+            # 注意: 不使用 --security-opt no-new-privileges，因为 sudo 需要 setuid 提权
             # 以宿主机用户身份运行（解决挂载文件权限问题）
             "--user", f"{host_uid}:{host_gid}",
             # 挂载工作区
