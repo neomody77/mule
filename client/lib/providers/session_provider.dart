@@ -913,10 +913,26 @@ class SessionNotifier extends StateNotifier<SessionState> {
         connectionState: sessionState,
         error: change.state == WsConnectionState.error ? 'Connection error' : null,
       );
+
+      // 断开连接时，保存当前处理状态以便重连后同步
       if (change.state == WsConnectionState.disconnected ||
           change.state == WsConnectionState.error) {
-        updated = updated.copyWith(isProcessing: false);
+        if (s.isProcessing) {
+          // 标记断开前正在处理，用于重连后同步
+          updated = updated.copyWith(
+            isProcessing: false,
+            wasProcessingBeforeDisconnect: true,
+          );
+        }
       }
+
+      // 重连成功后，如果断开前正在处理，主动发送 sync 请求
+      if (change.state == WsConnectionState.connected && s.wasProcessingBeforeDisconnect) {
+        debugPrint('[SessionNotifier] Reconnected, syncing task status for session ${change.sessionId}');
+        _connectionPool.sendSync(change.sessionId);
+        updated = updated.copyWith(wasProcessingBeforeDisconnect: false);
+      }
+
       return updated;
     });
   }

@@ -66,6 +66,7 @@ class ChatSession {
   SessionConnectionState connectionState;
   bool isProcessing;
   bool isCompacting; // 是否正在压缩上下文
+  bool wasProcessingBeforeDisconnect; // 断开连接时是否正在处理任务
   String? error;
   bool hasUnread; // 是否有未读消息（用户离开页面后收到的消息）
   List<PendingPrompt> pendingPrompts; // 排队中的消息
@@ -86,6 +87,7 @@ class ChatSession {
     this.connectionState = SessionConnectionState.disconnected,
     this.isProcessing = false,
     this.isCompacting = false,
+    this.wasProcessingBeforeDisconnect = false,
     this.error,
     this.hasUnread = false,
     List<PendingPrompt>? pendingPrompts,
@@ -168,6 +170,7 @@ class ChatSession {
     SessionConnectionState? connectionState,
     bool? isProcessing,
     bool? isCompacting,
+    bool? wasProcessingBeforeDisconnect,
     String? error,
     bool? hasUnread,
     List<PendingPrompt>? pendingPrompts,
@@ -189,6 +192,7 @@ class ChatSession {
       connectionState: connectionState ?? this.connectionState,
       isProcessing: isProcessing ?? this.isProcessing,
       isCompacting: isCompacting ?? this.isCompacting,
+      wasProcessingBeforeDisconnect: wasProcessingBeforeDisconnect ?? this.wasProcessingBeforeDisconnect,
       error: error,
       hasUnread: hasUnread ?? this.hasUnread,
       pendingPrompts: pendingPrompts ?? List.from(this.pendingPrompts),

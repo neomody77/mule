@@ -140,13 +140,16 @@ class _MessageBubbleState extends State<MessageBubble> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.memory(
-                message.imageData!,
-                width: 200,
-                height: 200,
-                fit: BoxFit.cover,
+            GestureDetector(
+              onTap: () => _showFullscreenImage(context, message.imageData!),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.memory(
+                  message.imageData!,
+                  width: 200,
+                  height: 200,
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
             if (message.content.isNotEmpty && !message.content.startsWith('[Image:')) ...[
@@ -267,6 +270,21 @@ class _MessageBubbleState extends State<MessageBubble> {
     } else {
       debugPrint('[MessageBubble] Cannot launch URL: $url');
     }
+  }
+
+  void _showFullscreenImage(BuildContext context, Uint8List imageData) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black87,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return _FullscreenImageViewer(imageData: imageData);
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
+    );
   }
 
   Widget _buildToolCall(BuildContext context, ToolCall toolCall) {
@@ -518,5 +536,99 @@ class _MessageBubbleState extends State<MessageBubble> {
 
   IconData _getToolIcon(String toolName) {
     return _toolIcons[toolName] ?? Icons.build_outlined;
+  }
+}
+
+/// 全屏图片查看器
+class _FullscreenImageViewer extends StatefulWidget {
+  final Uint8List imageData;
+
+  const _FullscreenImageViewer({required this.imageData});
+
+  @override
+  State<_FullscreenImageViewer> createState() => _FullscreenImageViewerState();
+}
+
+class _FullscreenImageViewerState extends State<_FullscreenImageViewer> {
+  final TransformationController _transformationController =
+      TransformationController();
+
+  @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  void _resetZoom() {
+    _transformationController.value = Matrix4.identity();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Stack(
+          children: [
+            // 图片区域 - 支持缩放和平移
+            Center(
+              child: GestureDetector(
+                onTap: () {}, // 防止点击图片关闭
+                onDoubleTap: _resetZoom,
+                child: InteractiveViewer(
+                  transformationController: _transformationController,
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: Image.memory(
+                    widget.imageData,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            ),
+            // 关闭按钮
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 16,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(
+                  Icons.close,
+                  color: Colors.white,
+                  size: 28,
+                ),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                ),
+              ),
+            ),
+            // 底部提示
+            Positioned(
+              bottom: MediaQuery.of(context).padding.bottom + 16,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black45,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    '双击重置缩放 · 点击空白处关闭',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
