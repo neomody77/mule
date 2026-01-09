@@ -674,12 +674,17 @@ class WorkspaceManager:
 
     def set_session_title(self, workspace_id: str, agent_session_id: str, title: str):
         """保存会话标题"""
+        # 保存到 meta.json (workspace_manager 使用)
         meta = self._load_meta(workspace_id)
         if meta:
             if "session_titles" not in meta:
                 meta["session_titles"] = {}
             meta["session_titles"][agent_session_id] = title
             self._save_meta(workspace_id, meta)
+
+        # 同时保存到 message_store 的 sessions.json (API 使用)
+        from app.services.message_store import message_store
+        message_store.update_session(workspace_id, agent_session_id, title=title)
 
     def ensure_default_workspace(self) -> WorkspaceInfo:
         """确保默认工作空间存在（用于后台任务、临时任务等）"""

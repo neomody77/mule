@@ -70,24 +70,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           final serverId = state.pathParameters['serverId']!;
           final workspaceId = state.pathParameters['workspaceId']!;
 
-          final container = ProviderScope.containerOf(context);
-          final serverState = container.read(serverProvider);
-          final server = serverState.getServer(serverId);
-
-          if (server == null) {
-            return const HomeScreen();
-          }
-
-          final workspaces = serverState.getWorkspaces(serverId);
-          final workspace = workspaces.where((w) => w.id == workspaceId).firstOrNull;
-
-          if (workspace == null) {
-            return const HomeScreen();
-          }
-
-          return WorkspaceDetailScreen(
-            server: server,
-            workspace: workspace,
+          return _WorkspaceLoader(
+            serverId: serverId,
+            workspaceId: workspaceId,
           );
         },
       ),
@@ -310,6 +295,127 @@ class _SessionLoaderState extends ConsumerState<_SessionLoader> {
     return SessionScreen(
       session: session,
       server: server,
+    );
+  }
+}
+
+/// Workspace 加载器 - 等待数据加载后显示 WorkspaceDetailScreen
+class _WorkspaceLoader extends ConsumerStatefulWidget {
+  final String serverId;
+  final String workspaceId;
+
+  const _WorkspaceLoader({
+    required this.serverId,
+    required this.workspaceId,
+  });
+
+  @override
+  ConsumerState<_WorkspaceLoader> createState() => _WorkspaceLoaderState();
+}
+
+class _WorkspaceLoaderState extends ConsumerState<_WorkspaceLoader> {
+  bool _initialized = false;
+  bool _notFound = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initData();
+  }
+
+  Future<void> _initData() async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    if (!mounted) return;
+
+    // 检查数据是否已加载
+    final serverState = ref.read(serverProvider);
+    final server = serverState.getServer(widget.serverId);
+    final workspaces = serverState.getWorkspaces(widget.serverId);
+    final workspace = workspaces.where((w) => w.id == widget.workspaceId).firstOrNull;
+
+    if (server != null && workspace != null) {
+      setState(() => _initialized = true);
+      return;
+    }
+
+    // 等待数据加载
+    for (var i = 0; i < 20; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (!mounted) return;
+
+      final serverState = ref.read(serverProvider);
+      final server = serverState.getServer(widget.serverId);
+      final workspaces = serverState.getWorkspaces(widget.serverId);
+      final workspace = workspaces.where((w) => w.id == widget.workspaceId).firstOrNull;
+
+      if (server != null && workspace != null) {
+        setState(() => _initialized = true);
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() => _notFound = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_notFound) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Workspace Not Found')),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 64, color: ZiaOlive.shade200),
+              const SizedBox(height: 16),
+              const Text('Workspace not found or data not loaded'),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: () => context.go(AppRoutes.home),
+                child: const Text('Go Home'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_initialized) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Loading workspace...',
+                style: TextStyle(color: ZiaOlive.shade300),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final serverState = ref.watch(serverProvider);
+    final server = serverState.getServer(widget.serverId);
+    final workspaces = serverState.getWorkspaces(widget.serverId);
+    final workspace = workspaces.where((w) => w.id == widget.workspaceId).firstOrNull;
+
+    if (server == null || workspace == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go(AppRoutes.home);
+      });
+      return const SizedBox.shrink();
+    }
+
+    return WorkspaceDetailScreen(
+      server: server,
+      workspace: workspace,
     );
   }
 }
