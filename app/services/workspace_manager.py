@@ -665,7 +665,12 @@ class WorkspaceManager:
                 self._save_meta(workspace_id, meta)
 
     def get_session_title(self, workspace_id: str, agent_session_id: str) -> Optional[str]:
-        """获取会话标题"""
+        """获取会话标题 - 优先从 message_store 获取，回退到 meta.json（兼容旧数据）"""
+        from app.services.message_store import message_store
+        session = message_store.get_session(workspace_id, agent_session_id)
+        if session and session.title:
+            return session.title
+        # 回退：从 meta.json 获取（兼容旧数据）
         meta = self._load_meta(workspace_id)
         if meta:
             titles = meta.get("session_titles", {})
@@ -673,16 +678,7 @@ class WorkspaceManager:
         return None
 
     def set_session_title(self, workspace_id: str, agent_session_id: str, title: str):
-        """保存会话标题"""
-        # 保存到 meta.json (workspace_manager 使用)
-        meta = self._load_meta(workspace_id)
-        if meta:
-            if "session_titles" not in meta:
-                meta["session_titles"] = {}
-            meta["session_titles"][agent_session_id] = title
-            self._save_meta(workspace_id, meta)
-
-        # 同时保存到 message_store 的 sessions.json (API 使用)
+        """保存会话标题到 message_store"""
         from app.services.message_store import message_store
         message_store.update_session(workspace_id, agent_session_id, title=title)
 
