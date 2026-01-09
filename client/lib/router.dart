@@ -194,30 +194,22 @@ class _SessionLoaderState extends ConsumerState<_SessionLoader> {
   }
 
   Future<void> _initData() async {
-    // 等待 provider 初始化完成
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    if (!mounted) return;
-
-    // 检查数据是否已加载
-    final serverState = ref.read(serverProvider);
-    final sessionState = ref.read(sessionProvider);
-
-    final server = serverState.getServer(widget.serverId);
-    final session = sessionState.getSession(widget.sessionId);
-
-    if (server != null && session != null) {
-      setState(() => _initialized = true);
-      return;
-    }
-
-    // 如果没有数据，尝试等待更长时间（数据可能正在从存储加载）
-    for (var i = 0; i < 20; i++) {
+    // 等待 provider 初始化
+    for (var i = 0; i < 50; i++) {
       await Future.delayed(const Duration(milliseconds: 100));
       if (!mounted) return;
 
       final serverState = ref.read(serverProvider);
       final sessionState = ref.read(sessionProvider);
+
+      // 如果还在加载中，继续等待
+      if (serverState.isLoading || sessionState.isLoading) continue;
+
+      // 如果 servers 为空，说明没有配置
+      if (serverState.servers.isEmpty) {
+        setState(() => _notFound = true);
+        return;
+      }
 
       final server = serverState.getServer(widget.serverId);
       final session = sessionState.getSession(widget.sessionId);
@@ -226,10 +218,15 @@ class _SessionLoaderState extends ConsumerState<_SessionLoader> {
         setState(() => _initialized = true);
         return;
       }
+
+      // server 存在但 session 还没找到，可能还在同步，继续等待
+      if (server != null && sessionState.sessions.isEmpty) continue;
+
+      // 数据已加载但找不到目标
+      break;
     }
 
-    // 超时，跳转到首页
-    if (mounted) {
+    if (mounted && !_initialized) {
       setState(() => _notFound = true);
     }
   }
@@ -324,27 +321,22 @@ class _WorkspaceLoaderState extends ConsumerState<_WorkspaceLoader> {
   }
 
   Future<void> _initData() async {
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    if (!mounted) return;
-
-    // 检查数据是否已加载
-    final serverState = ref.read(serverProvider);
-    final server = serverState.getServer(widget.serverId);
-    final workspaces = serverState.getWorkspaces(widget.serverId);
-    final workspace = workspaces.where((w) => w.id == widget.workspaceId).firstOrNull;
-
-    if (server != null && workspace != null) {
-      setState(() => _initialized = true);
-      return;
-    }
-
-    // 等待数据加载
-    for (var i = 0; i < 20; i++) {
+    // 等待 provider 初始化
+    for (var i = 0; i < 50; i++) {
       await Future.delayed(const Duration(milliseconds: 100));
       if (!mounted) return;
 
       final serverState = ref.read(serverProvider);
+
+      // 如果还在加载中，继续等待
+      if (serverState.isLoading) continue;
+
+      // 如果 servers 为空且不在加载，说明没有配置服务器
+      if (serverState.servers.isEmpty) {
+        setState(() => _notFound = true);
+        return;
+      }
+
       final server = serverState.getServer(widget.serverId);
       final workspaces = serverState.getWorkspaces(widget.serverId);
       final workspace = workspaces.where((w) => w.id == widget.workspaceId).firstOrNull;
@@ -353,9 +345,15 @@ class _WorkspaceLoaderState extends ConsumerState<_WorkspaceLoader> {
         setState(() => _initialized = true);
         return;
       }
+
+      // server 存在但 workspace 还没加载，继续等待
+      if (server != null && workspaces.isEmpty) continue;
+
+      // server 不存在或 workspace 不存在
+      break;
     }
 
-    if (mounted) {
+    if (mounted && !_initialized) {
       setState(() => _notFound = true);
     }
   }
