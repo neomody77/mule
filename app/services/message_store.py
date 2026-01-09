@@ -200,6 +200,14 @@ class MessageStore:
             # 保存更新后的元数据
             self._save_sessions_meta(workspace_id, sessions)
 
+        # 从 workspace_manager 获取 session_titles 补充缺失的 title
+        from app.services.workspace_manager import workspace_manager
+        for session_id, session_data in sessions.items():
+            if not session_data.get("title"):
+                title = workspace_manager.get_session_title(workspace_id, session_id)
+                if title:
+                    session_data["title"] = title
+
         result = [SessionInfo.from_dict(s) for s in sessions.values()]
         # 按更新时间倒序排列
         result.sort(key=lambda x: x.updated_at or "", reverse=True)
