@@ -174,7 +174,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen> with WidgetsBindi
   void _goBack() {
     // 清除活跃 session（后续消息将标记为未读）
     ref.read(sessionProvider.notifier).setActiveSession(null);
-    context.go(AppRoutes.home);
+
+    // 检查是否可以 pop（有历史记录）
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      // 没有历史记录时，返回到 session 所属的 workspace 页面
+      context.go(AppRoutes.workspacePath(
+        widget.server.id,
+        widget.session.workspaceId,
+      ));
+    }
   }
 
   @override
