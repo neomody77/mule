@@ -29,6 +29,7 @@ class WorkspaceDetailScreen extends ConsumerStatefulWidget {
 class _WorkspaceDetailScreenState extends ConsumerState<WorkspaceDetailScreen> {
   // 用于关闭所有打开的 Slidable
   final _openSlidableControllers = <SlidableController>[];
+  bool _isSyncing = true; // 是否正在同步 sessions
 
   void _registerSlidableController(SlidableController controller) {
     _openSlidableControllers.add(controller);
@@ -50,12 +51,15 @@ class _WorkspaceDetailScreenState extends ConsumerState<WorkspaceDetailScreen> {
   void initState() {
     super.initState();
     // 同步该 workspace 的 sessions
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(sessionProvider.notifier).syncSessionsFromServer(
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await ref.read(sessionProvider.notifier).syncSessionsFromServer(
         widget.server,
         widget.workspace.id,
         widget.workspace.name,
       );
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
     });
   }
 
@@ -222,15 +226,33 @@ class _WorkspaceDetailScreenState extends ConsumerState<WorkspaceDetailScreen> {
         ),
         body: GestureDetector(
           onTap: _closeAllSlidables,
-          child: sessions.isEmpty
-              ? _buildEmptySessions()
-              : _buildSessionsList(sessions),
+          child: _isSyncing && sessions.isEmpty
+              ? _buildLoadingSessions()
+              : sessions.isEmpty
+                  ? _buildEmptySessions()
+                  : _buildSessionsList(sessions),
         ),
         floatingActionButton: FloatingActionButton(
           onPressed: _createNewSession,
           tooltip: 'New Session',
           child: const Icon(Icons.add),
         ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingSessions() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(
+            'Loading sessions...',
+            style: TextStyle(color: ZiaOlive.shade300),
+          ),
+        ],
       ),
     );
   }

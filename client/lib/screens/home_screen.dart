@@ -567,6 +567,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   data.workspaceId,
                 ));
               },
+              onOpenSession: _openSession,
               onDelete: data.workspaceId != 'default'
                   ? () => _confirmDeleteWorkspace(data)
                   : null,
@@ -2038,6 +2039,7 @@ class _CreateWorkspaceSheetState extends ConsumerState<_CreateWorkspaceSheet> {
 class _WorkspaceListTile extends ConsumerStatefulWidget {
   final _WorkspaceCardData data;
   final VoidCallback onTap;
+  final void Function(ChatSession)? onOpenSession;
   final VoidCallback? onDelete;
   final VoidCallback? onRestart;
   final void Function(SlidableController)? onRegisterController;
@@ -2046,6 +2048,7 @@ class _WorkspaceListTile extends ConsumerStatefulWidget {
   const _WorkspaceListTile({
     required this.data,
     required this.onTap,
+    this.onOpenSession,
     this.onDelete,
     this.onRestart,
     this.onRegisterController,
@@ -2166,80 +2169,158 @@ class _WorkspaceListTileState extends ConsumerState<_WorkspaceListTile> with Tic
 
   @override
   Widget build(BuildContext context) {
-    final tile = ListTile(
-      onTap: widget.onTap,
-      leading: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: ZiaOlive.shade500.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(
-          widget.data.workspaceId == 'default'
-              ? Icons.home_outlined
-              : Icons.folder_outlined,
-          color: ZiaOlive.shade500,
-        ),
-      ),
-      title: Row(
-        children: [
-          Flexible(
-            child: Text(
-              widget.data.workspaceName,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-              overflow: TextOverflow.ellipsis,
+    // 获取最近的 session（按 lastActiveAt 排序，取前 3 个）
+    final recentSessions = widget.data.sessions.toList()
+      ..sort((a, b) => b.lastActiveAt.compareTo(a.lastActiveAt));
+    final displaySessions = recentSessions.take(3).toList();
+
+    final tile = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Workspace 头部
+        ListTile(
+          onTap: widget.onTap,
+          leading: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: ZiaOlive.shade500.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              widget.data.workspaceId == 'default'
+                  ? Icons.home_outlined
+                  : Icons.folder_outlined,
+              color: ZiaOlive.shade500,
             ),
           ),
-          if (widget.data.workspaceId == 'default') ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: ZiaOlive.shade500.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                'Default',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: ZiaOlive.shade500,
-                  fontWeight: FontWeight.w500,
+          title: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  widget.data.workspaceName,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-            ),
-          ],
-        ],
-      ),
-      subtitle: Row(
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: widget.data.isServerOnline ? ZiaOlive.success : ZiaOlive.error,
+              if (widget.data.workspaceId == 'default') ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: ZiaOlive.shade500.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Default',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: ZiaOlive.shade500,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          subtitle: Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: widget.data.isServerOnline ? ZiaOlive.success : ZiaOlive.error,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                widget.data.server.name,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: ZiaOlive.shade200,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '${widget.data.sessions.length} session${widget.data.sessions.length == 1 ? '' : 's'}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: ZiaOlive.shade300,
+                ),
+              ),
+            ],
+          ),
+          trailing: Icon(Icons.chevron_right, color: ZiaOlive.shade300),
+        ),
+        // 最近 sessions 列表
+        if (displaySessions.isNotEmpty && widget.onOpenSession != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 60, right: 16, bottom: 8),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: displaySessions.map((session) {
+                final isProcessing = session.isProcessing;
+                final hasUnread = session.hasUnread;
+                return InkWell(
+                  onTap: () => widget.onOpenSession!(session),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: hasUnread
+                          ? ZiaOlive.shade500.withValues(alpha: 0.15)
+                          : ZiaOlive.shade100.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(16),
+                      border: hasUnread
+                          ? Border.all(color: ZiaOlive.shade500.withValues(alpha: 0.3))
+                          : null,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isProcessing) ...[
+                          SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.5,
+                              color: ZiaOlive.shade500,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                        ] else if (hasUnread) ...[
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: ZiaOlive.shade500,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                        ],
+                        Flexible(
+                          child: Text(
+                            session.name,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: hasUnread ? ZiaOlive.shade600 : ZiaOlive.shade400,
+                              fontWeight: hasUnread ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
           ),
-          const SizedBox(width: 4),
-          Text(
-            widget.data.server.name,
-            style: TextStyle(
-              fontSize: 12,
-              color: ZiaOlive.shade200,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            '${widget.data.sessions.length} session${widget.data.sessions.length == 1 ? '' : 's'}',
-            style: TextStyle(
-              fontSize: 12,
-              color: ZiaOlive.shade300,
-            ),
-          ),
-        ],
-      ),
-      trailing: Icon(Icons.chevron_right, color: ZiaOlive.shade300),
+      ],
     );
 
     // 如果不能删除，直接返回 tile

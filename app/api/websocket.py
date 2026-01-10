@@ -178,7 +178,7 @@ class UnifiedConnectionManager:
         for conn_id in subscribers:
             await self.send_to_connection(conn_id, data_with_session)
 
-    def get_or_create_agent(self, workspace_id: str, session_id: str):
+    def get_or_create_agent(self, workspace_id: str, session_id: str, raw_workspace_id: str = None):
         """获取或创建 Agent（每个 session 独立）
 
         根据配置 agent_backend 选择使用:
@@ -215,6 +215,12 @@ class UnifiedConnectionManager:
                     on_event=on_event,
                     on_permission_request=on_permission_request,
                     permission_mode=settings.acp_permission_mode,
+                )
+            elif backend == "sandbox":
+                self.agents[workspace_id][session_id] = AgentClass(
+                    workspace_path=str(workspace_path),
+                    workspace_id=workspace_id,
+                    agent_session_id=session_id,
                 )
             else:
                 self.agents[workspace_id][session_id] = AgentClass(
@@ -549,11 +555,34 @@ async def _handle_prompt(ctx: MessageHandlerContext) -> bool:
 
 
 async def _queue_prompt(ctx: MessageHandlerContext, content: str) -> bool:
-    """将 prompt 加入队列"""
+    """将 prompt 加入队列或直接注入到正在运行的任务
+
+    优先尝试流式注入（inject_message），如果不支持则使用传统队列。
+    流式注入会在当前子任务结束时立即处理消息，而不是等整个任务结束。
+    """
+    prompt_id = str(uuid4())[:8]
+
+    # 尝试直接注入到正在运行的 agent
+    agent = manager.agents.get(ctx.workspace_id, {}).get(ctx.session_id)
+    if agent and hasattr(agent, 'inject_message'):
+        injected = await agent.inject_message(content)
+        if injected:
+            await manager.send_to_session(ctx.workspace_id, ctx.session_id, {
+                "event": "prompt_queued",
+                "data": {
+                    "id": prompt_id,
+                    "content": content,
+                    "position": 1,  # 注入的消息会在下一个子任务后处理
+                    "injected": True,
+                }
+            }, display_workspace_id=ctx.raw_workspace_id)
+            logger.info(f"Prompt {prompt_id} injected for {ctx.task_key}")
+            return True
+
+    # 回退到传统队列方式
     if ctx.task_key not in manager.pending_prompts:
         manager.pending_prompts[ctx.task_key] = []
 
-    prompt_id = str(uuid4())[:8]
     manager.pending_prompts[ctx.task_key].append((prompt_id, content))
 
     await manager.send_to_session(ctx.workspace_id, ctx.session_id, {

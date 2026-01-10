@@ -354,7 +354,12 @@ class SandboxAgent:
     - 容器内的 .claude 目录可读写
     """
 
-    def __init__(self, workspace_path: str, workspace_id: str = "", agent_session_id: str = ""):
+    def __init__(
+        self,
+        workspace_path: str,
+        workspace_id: str = "",
+        agent_session_id: str = "",
+    ):
         self.workspace_path = Path(workspace_path).resolve()
         self.workspace_id = workspace_id
         self.agent_session_id = agent_session_id
@@ -380,6 +385,8 @@ class SandboxAgent:
 
         self._process: Optional[asyncio.subprocess.Process] = None
         self._is_processing = False
+        self._pending_messages: list[str] = []  # 待注入的消息队列
+        self._message_lock = asyncio.Lock()  # 消息队列锁
 
     def _setup_container_claude_dir(self) -> None:
         """准备容器专属的 .claude 目录（在宿主机上）
@@ -518,17 +525,24 @@ class SandboxAgent:
                 "data": {"type": "task_start", "message": "Starting task in sandbox..."}
             }
 
-            # 构建 claude 命令
+            # 构建 claude 命令 - 使用 stream-json 输入模式支持流式输入
             # 注意: --output-format stream-json 需要配合 --verbose 使用
-            claude_cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]
+            claude_cmd = [
+                "claude", "-p",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--verbose",
+                "--dangerously-skip-permissions"
+            ]
 
             # 如果有之前的会话，使用 --resume 继续
             if self.session_id:
                 claude_cmd.extend(["--resume", self.session_id])
 
             # 在容器中执行（容器已以正确 UID 运行，无需 -u）
+            # 需要 -i 参数来支持 stdin 输入
             docker_exec = [
-                "docker", "exec", "-w", "/workspace",
+                "docker", "exec", "-i", "-w", "/workspace",
                 self.container_name,
                 "/bin/bash", "-lc",
                 " ".join(f'"{arg}"' if " " in arg else arg for arg in claude_cmd)
@@ -536,14 +550,23 @@ class SandboxAgent:
 
             logger.debug(f"Docker exec command: {' '.join(docker_exec)}")
 
-            # 启动进程
+            # 启动进程，需要 stdin 来支持流式输入
             # limit 设置为 128MB，避免大文件内容导致 LimitOverrunError
             self._process = await asyncio.create_subprocess_exec(
                 *docker_exec,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=128 * 1024 * 1024,  # 128MB
             )
+
+            # 发送初始消息
+            initial_message = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": prompt}
+            }) + "\n"
+            self._process.stdin.write(initial_message.encode('utf-8'))
+            await self._process.stdin.drain()
 
             # 后台任务持续消费 stderr，避免缓冲区满导致死锁
             stderr_lines: list[str] = []
@@ -666,6 +689,33 @@ class SandboxAgent:
                             }
                         }
 
+                        # 检查是否有待注入的消息（流式输入）
+                        async with self._message_lock:
+                            if self._pending_messages and self._process and self._process.stdin:
+                                next_prompt = self._pending_messages.pop(0)
+                                logger.info(f"Injecting pending message: {next_prompt[:100]}...")
+
+                                # 记录新任务开始
+                                if self.activity_logger:
+                                    self.activity_logger.log_task_start(next_prompt)
+
+                                # 发送消息到 stdin
+                                next_message = json.dumps({
+                                    "type": "user",
+                                    "message": {"role": "user", "content": next_prompt}
+                                }) + "\n"
+                                self._process.stdin.write(next_message.encode('utf-8'))
+                                await self._process.stdin.drain()
+
+                                # 通知客户端有新消息开始处理
+                                yield {
+                                    "event": "status",
+                                    "data": {"type": "task_start", "message": "Processing next message..."}
+                                }
+                            elif not self._pending_messages and self._process and self._process.stdin:
+                                # 没有待处理消息，关闭 stdin 让进程正常结束
+                                self._process.stdin.close()
+
                     elif event_type == "system":
                         subtype = event.get("subtype", "")
                         if subtype == "init":
@@ -679,12 +729,54 @@ class SandboxAgent:
                     continue
 
             await self._process.wait()
+            return_code = self._process.returncode
 
             # 等待 stderr 读取完成
             await stderr_task
+            stderr_text = ""
             if stderr_lines:
                 stderr_text = chr(10).join(stderr_lines)
                 logger.warning(f"Sandbox stderr: {stderr_text}")
+
+            # 检查进程退出状态
+            if return_code != 0:
+                error_msg = f"Claude process exited with code {return_code}"
+
+                # 特殊处理常见错误码
+                if return_code == 139:
+                    error_msg = "Container crashed (segmentation fault). The container has been removed and will be recreated on next request."
+                    # 尝试清理崩溃的容器
+                    try:
+                        subprocess.run(["docker", "rm", "-f", self.container_name], capture_output=True)
+                        logger.info(f"Removed crashed container: {self.container_name}")
+                    except Exception as cleanup_err:
+                        logger.warning(f"Failed to cleanup container: {cleanup_err}")
+                elif return_code == 1:
+                    if "401" in stderr_text or "authentication" in stderr_text.lower() or "unauthorized" in stderr_text.lower():
+                        error_msg = "Authentication failed. OAuth token may have expired."
+                    elif stderr_text:
+                        error_msg = f"Claude error: {stderr_text[:500]}"
+                    else:
+                        error_msg = "Claude process failed. Check server logs for details."
+                elif return_code == 137:
+                    error_msg = "Process was killed (possibly out of memory)."
+                elif return_code == 126:
+                    error_msg = "Claude command not found or not executable in container."
+                elif return_code == 127:
+                    error_msg = "Claude command not found in container. Container may need to be rebuilt."
+
+                logger.error(f"Sandbox execution failed: {error_msg} (return_code={return_code}, stderr={stderr_text[:200]})")
+
+                if self.activity_logger:
+                    self.activity_logger.log_task_end(success=False, error=error_msg)
+
+                yield {
+                    "event": "error",
+                    "data": {
+                        "message": error_msg,
+                        "return_code": return_code,
+                    }
+                }
 
         except Exception as e:
             logger.error(f"Sandbox execution error: {e}", exc_info=True)
@@ -745,6 +837,28 @@ class SandboxAgent:
 
         generator = generators.get(tool_name)
         return generator() if generator else f"Using {tool_name}..."
+
+    async def inject_message(self, prompt: str) -> bool:
+        """注入消息到当前执行流程
+
+        当任务正在执行时，可以调用此方法添加新消息。
+        消息会在当前子任务（如 tool call）结束时被发送。
+
+        Returns:
+            bool: 是否成功添加到队列
+        """
+        if not self._is_processing:
+            logger.warning("Cannot inject message: no task is running")
+            return False
+
+        async with self._message_lock:
+            self._pending_messages.append(prompt)
+            logger.info(f"Message queued for injection: {prompt[:100]}... (queue size: {len(self._pending_messages)})")
+            return True
+
+    def has_pending_messages(self) -> bool:
+        """检查是否有待注入的消息"""
+        return len(self._pending_messages) > 0
 
     async def cancel(self) -> None:
         """取消当前执行"""
